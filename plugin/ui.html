@@ -634,6 +634,15 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; 
 
     <div class="lib-h"><span>Компоненты</span><span class="count" id="lib-k-count"></span></div>
     <div class="comp-list" id="lib-comp"></div>
+
+    <div class="lib-h">
+      <span>🔴 Черновики в DS <span class="count" id="lib-d-count"></span></span>
+      <button id="materialize-btn" class="suggest-chip" style="padding: 4px 10px; font-size: 11px;" disabled>Создать страницу 🔴 Drafts</button>
+    </div>
+    <div id="lib-drafts" style="display: flex; flex-direction: column; gap: 6px;"></div>
+    <div style="font-size: 10px; color: var(--text-dim); margin-top: 8px; line-height: 1.5;">
+      Черновики хранятся локально в плагине. Чтобы перенести их в UI Kit Uchi.ru — откройте сам файл UI Kit'а в Figma и нажмите «Создать страницу».
+    </div>
   </div>
 
   <!-- CHAT PANE -->
@@ -699,13 +708,14 @@ const state = {
   selectionCount: 0,
   selectionNames: [],
   ds: null,
-  issues: { colors: [], spacing: [], typography: [], outdated: [], components: [] },
+  drafts: [],
+  fileKey: null,
+  issues: { colors: [], colorsForeign: [], spacing: [], typography: [], outdated: [], components: [], componentsAdHoc: [] },
   fixed: new Set(),
-  review: null,
   reviewContext: null,           // { layoutJson, issues, selectionNames, screenshotBase64 }
+  dsCompact: null,
   chat: [],                       // { role: 'user'|'assistant', content }
-  chatBusy: false,
-  reviewRequested: false
+  chatBusy: false
 };
 
 function send(msg) { parent.postMessage({ pluginMessage: msg }, '*'); }
@@ -799,7 +809,7 @@ window.onmessage = function (event) {
   }
 
   if (msg.type === 'analyze-result') {
-    state.issues = msg.issues;
+    state.issues = Object.assign({ colors: [], colorsForeign: [], spacing: [], typography: [], outdated: [], components: [], componentsAdHoc: [] }, msg.issues);
     state.fixed = new Set();
     renderReview();
     $('analyze-btn').disabled = state.selectionCount === 0;
@@ -807,10 +817,25 @@ window.onmessage = function (event) {
     updateIssueCount();
   }
 
-  if (msg.type === 'request-ux-review') {
+  if (msg.type === 'analyze-context') {
     state.reviewContext = msg.context;
-    requestReview(Object.assign({}, msg.payload, { perspective: state.perspective }));
+    state.dsCompact = msg.dsCompact;
     $('chat-suggested').style.display = 'flex';
+  }
+
+  if (msg.type === 'drafts') {
+    state.drafts = msg.drafts || [];
+    state.fileKey = msg.fileKey;
+    renderDrafts();
+  }
+
+  if (msg.type === 'draft-added') {
+    toast('Добавлено в черновики DS');
+  }
+
+  if (msg.type === 'materialize-result') {
+    if (msg.ok) toast('Создана страница 🔴 Drafts (' + msg.count + ' элементов)');
+    else toast(msg.reason || 'Не удалось материализовать');
   }
 
   if (msg.type === 'fix-result') {
@@ -895,28 +920,38 @@ function renderReviewLoading() {
 function renderReview() {
   const c = $('review-content');
   const i = state.issues;
-  const total = i.colors.length + i.spacing.length + i.typography.length + i.outdated.length + i.components.length;
+  const total = i.colors.length + i.colorsForeign.length + i.spacing.length + i.typography.length + i.outdated.length + i.components.length + i.componentsAdHoc.length;
 
   let html = '';
 
-  // GPT review card
-  if (state.review) {
-    html += renderScoreCard(state.review);
-  } else {
-    html += '<div class="shimmer wide"></div><div class="shimmer" style="width: 60%; margin-bottom: 18px;"></div>';
-  }
-
   if (total === 0) {
-    html += '<div class="empty" style="padding: 30px 16px;"><div class="icon">✓</div><div class="title">Чисто</div><div class="hint">Все цвета, типографика, отступы и компоненты соответствуют дизайн-системе.</div></div>';
+    html += '<div class="empty" style="padding: 30px 16px;"><div class="icon">✓</div><div class="title">Чисто</div><div class="hint">Все цвета, типографика, отступы и компоненты соответствуют дизайн-системе.</div><div style="margin-top: 16px;"><button class="suggest-chip" id="ask-gpt-after" style="padding: 8px 14px;">Спросить у GPT — что улучшить</button></div></div>';
+    c.innerHTML = html;
+    const askBtn = $('ask-gpt-after');
+    if (askBtn) askBtn.addEventListener('click', function () {
+      switchTab('chat');
+      $('chat-text').focus();
+    });
+    return;
   }
 
-  // colors grouped
+  // Подсказка про чат сверху
+  html += '<div style="padding: 10px 12px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 10px;">' +
+    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent); flex-shrink: 0;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+    '<span style="flex: 1;">Хотите разобрать конкретный экран?  <a href="#" id="goto-chat-link" style="color: var(--accent); font-weight: 500;">Спросите у GPT во вкладке Chat</a></span>' +
+  '</div>';
+
+  // colors грубо отличающиеся от DS (low confidence) — отдельной секцией с draft-кнопкой
+  if (i.colorsForeign.length > 0) {
+    html += sectionHeader('Цвета не из DS', i.colorsForeign.length, null);
+    html += i.colorsForeign.map(renderForeignColorCard).join('');
+  }
+
   if (i.colors.length > 0) {
-    html += sectionHeader('Цвета', i.colors.length, 'colors');
+    html += sectionHeader('Цвета — близко к токенам', i.colors.length, 'colors');
     html += i.colors.map(renderColorCard).join('');
   }
 
-  // spacing grouped by node
   if (i.spacing.length > 0) {
     const grouped = groupBy(i.spacing, 'nodeId');
     html += sectionHeader('Отступы', i.spacing.length, 'spacing');
@@ -925,26 +960,32 @@ function renderReview() {
     });
   }
 
-  // typography
   if (i.typography.length > 0) {
     html += sectionHeader('Типографика', i.typography.length, 'typography');
     html += i.typography.map(renderTypoCard).join('');
   }
 
-  // outdated
   if (i.outdated.length > 0) {
-    html += sectionHeader('Обновления', i.outdated.length, 'outdated');
+    html += sectionHeader('Обновления компонентов', i.outdated.length, 'outdated');
     html += i.outdated.map(renderOutdatedCard).join('');
   }
 
-  // foreign / unknown components
+  // foreign + local components — отдельно, с draft-кнопкой
   if (i.components.length > 0) {
     html += sectionHeader('Компоненты не из DS', i.components.length, null);
-    html += i.components.map(renderForeignCard).join('');
+    html += i.components.map(renderForeignCompCard).join('');
+  }
+
+  // ad-hoc buttons / blocks которые должны быть компонентами
+  if (i.componentsAdHoc.length > 0) {
+    html += sectionHeader('Похоже на компонент, но это фрейм', i.componentsAdHoc.length, null);
+    html += i.componentsAdHoc.map(renderAdHocCard).join('');
   }
 
   c.innerHTML = html;
   attachReviewHandlers();
+  const gl = $('goto-chat-link');
+  if (gl) gl.addEventListener('click', function (e) { e.preventDefault(); switchTab('chat'); $('chat-text').focus(); });
 }
 
 function sectionHeader(title, count, fixCategory) {
@@ -960,7 +1001,7 @@ function groupBy(arr, key) {
   return out;
 }
 
-function renderScoreCard(r) {
+function _legacy_renderScoreCard_unused(r) {
   const score = r.overall_score || 0;
   const tagClass = score >= 80 ? 'good' : score >= 60 ? 'ok' : 'bad';
   const tag = score >= 80 ? 'GOOD' : score >= 60 ? 'OK' : 'NEEDS WORK';
@@ -996,10 +1037,13 @@ function renderScoreCard(r) {
 function renderColorCard(c) {
   if (state.fixed.has(c.id)) return '';
   const conf = c.confidence || 'medium';
+  const bindTag = c.variableKey ? '<span style="font-size:9px; color: var(--ok); margin-left: 4px;">● variable</span>' :
+                  c.styleKey ? '<span style="font-size:9px; color: var(--link); margin-left: 4px;">● style</span>' :
+                  '<span style="font-size:9px; color: var(--text-dim); margin-left: 4px;">○ raw</span>';
   const altsHtml = (c.candidates && c.candidates.length > 1) ?
     '<div class="alt-candidates"><span class="label">альтернативы:</span>' +
     c.candidates.slice(1).map(function (alt) {
-      return '<button class="alt-chip" data-alt-hex="' + alt.hex + '" data-id="' + c.id + '" data-node="' + c.nodeId + '" data-prop="' + c.property + '">' +
+      return '<button class="alt-chip" data-alt-hex="' + alt.hex + '" data-alt-vk="' + (alt.variableKey || '') + '" data-alt-sk="' + (alt.styleKey || '') + '" data-id="' + c.id + '" data-node="' + c.nodeId + '" data-prop="' + c.property + '">' +
         '<span class="mini-swatch" style="background:' + alt.hex + '"></span>' + esc(alt.name) + '</button>';
     }).join('') + '</div>' : '';
 
@@ -1016,22 +1060,43 @@ function renderColorCard(c) {
       '<svg class="swatch-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>' +
       '<div class="swatch" style="background: ' + c.suggested + '"><div class="swatch-hex">' + c.suggested + '</div></div>' +
       '<div class="info">' +
-        '<div class="token"><span class="confidence-dot ' + conf + '"></span>' + esc(c.suggestedToken) + '</div>' +
+        '<div class="token"><span class="confidence-dot ' + conf + '"></span>' + esc(c.suggestedToken) + bindTag + '</div>' +
         '<div class="hexline">' + c.current + ' → ' + c.suggested + '</div>' +
       '</div>' +
     '</div>' +
     altsHtml +
     '<div class="actions">' +
-      '<button class="btn-apply" data-fix-color="' + c.id + '" data-node="' + c.nodeId + '" data-prop="' + c.property + '" data-hex="' + c.suggested + '">Применить</button>' +
+      '<button class="btn-apply" data-fix-color="' + c.id + '" data-node="' + c.nodeId + '" data-prop="' + c.property + '" data-hex="' + c.suggested + '" data-vk="' + (c.variableKey || '') + '" data-sk="' + (c.styleKey || '') + '">Bind токен</button>' +
+    '</div>' +
+  '</div>';
+}
+
+// Цвет совсем не из DS — даём только кнопку "В DS как черновик"
+function renderForeignColorCard(c) {
+  return '<div class="card" data-card-id="' + c.id + '">' +
+    '<div class="card-head">' +
+      '<span class="property" style="background: rgba(255,159,10,0.14); color: var(--warn);">не в DS</span>' +
+      '<span class="node-name">' + esc(c.nodeName) + '</span>' +
+      '<button class="locate" data-locate="' + c.nodeId + '" title="Показать в Figma">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div style="display: flex; align-items: center; gap: 10px; padding: 8px; background: var(--bg-card); border-radius: var(--radius-sm);">' +
+      '<div class="swatch" style="background: ' + c.current + '"><div class="swatch-hex">' + c.current + '</div></div>' +
+      '<div style="flex: 1; font-size: 11px; color: var(--text-muted); line-height: 1.4;">' +
+        'Цвет не близок ни к одному токену. Если он нужен — отправьте в DS как черновик.' +
+      '</div>' +
+    '</div>' +
+    '<div class="actions">' +
+      '<button class="btn-apply" data-add-color-draft="' + c.id + '" data-hex="' + c.current + '" data-node="' + esc(c.nodeName) + '">+ В DS как черновик</button>' +
     '</div>' +
   '</div>';
 }
 
 function renderSpacingGroup(items) {
   const node = items[0];
-  const allFixed = items.every(function (i) { return state.fixed.has(i.id); });
-  if (allFixed) return '';
   const visible = items.filter(function (i) { return !state.fixed.has(i.id); });
+  if (visible.length === 0) return '';
   const propLabel = { paddingLeft: 'padding L', paddingRight: 'padding R', paddingTop: 'padding T', paddingBottom: 'padding B', itemSpacing: 'item gap' };
   return '<div class="card">' +
     '<div class="card-head">' +
@@ -1042,11 +1107,13 @@ function renderSpacingGroup(items) {
       '</button>' +
     '</div>' +
     visible.map(function (it) {
+      const tokenTag = it.suggestedToken ? ' <span style="font-size:9px; color: var(--text-dim); margin-left: 6px;">' + esc(it.suggestedToken) + '</span>' : '';
+      const bindDot = it.variableKey ? '<span style="display:inline-block; width:5px; height:5px; border-radius:50%; background: var(--ok); margin-right: 4px;"></span>' : '';
       return '<div class="spacing-row">' +
-        '<span class="prop">' + (propLabel[it.property] || it.property) + '</span>' +
+        '<span class="prop">' + bindDot + (propLabel[it.property] || it.property) + '</span>' +
         '<span class="val-current">' + it.current + 'px</span>' +
         '<svg class="arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>' +
-        '<span class="val-suggested">' + it.suggested + 'px</span>' +
+        '<span class="val-suggested">' + it.suggested + 'px</span>' + tokenTag +
       '</div>';
     }).join('') +
     '<div class="actions">' +
@@ -1057,6 +1124,7 @@ function renderSpacingGroup(items) {
 
 function renderTypoCard(t) {
   if (state.fixed.has(t.id)) return '';
+  const bindTag = t.styleKey ? '<span style="font-size:9px; color: var(--link); margin-left: 4px;">● style</span>' : '<span style="font-size:9px; color: var(--text-dim); margin-left: 4px;">○ raw</span>';
   return '<div class="card" data-card-id="' + t.id + '">' +
     '<div class="card-head">' +
       '<span class="property">text</span>' +
@@ -1071,10 +1139,10 @@ function renderTypoCard(t) {
     '</div>' +
     '<div class="type-preview will">' +
       '<div class="sample" style="font-size: 14px; font-weight: ' + t.targetWeight + ';">Aa</div>' +
-      '<div><div class="specs">' + esc(t.suggestedToken) + '</div><div class="specs">' + esc(t.suggested) + '</div></div>' +
+      '<div><div class="specs">' + esc(t.suggestedToken) + bindTag + '</div><div class="specs">' + esc(t.suggested) + '</div></div>' +
     '</div>' +
     '<div class="actions">' +
-      '<button class="btn-apply" data-fix-typo="' + t.id + '" data-node="' + t.nodeId + '" data-size="' + t.targetSize + '" data-lh="' + t.targetLineHeight + '" data-weight="' + t.targetWeight + '">Применить</button>' +
+      '<button class="btn-apply" data-fix-typo="' + t.id + '" data-node="' + t.nodeId + '" data-size="' + t.targetSize + '" data-lh="' + t.targetLineHeight + '" data-weight="' + t.targetWeight + '" data-sk="' + (t.styleKey || '') + '">' + (t.styleKey ? 'Bind стиль' : 'Применить') + '</button>' +
     '</div>' +
   '</div>';
 }
@@ -1095,16 +1163,34 @@ function renderOutdatedCard(o) {
   '</div>';
 }
 
-function renderForeignCard(c) {
+function renderForeignCompCard(c) {
+  const label = c.type === 'foreign_library' ? 'чужая lib' : c.type === 'local_component' ? 'локальный' : 'не из DS';
+  const canDraft = c.type === 'local_component' || c.type === 'foreign_library';
   return '<div class="card" data-card-id="' + c.id + '">' +
     '<div class="card-head">' +
-      '<span class="property" style="background: rgba(255,159,10,0.14); color: var(--warn);">' + (c.type === 'foreign_library' ? 'чужая lib' : 'не из DS') + '</span>' +
+      '<span class="property" style="background: rgba(255,159,10,0.14); color: var(--warn);">' + label + '</span>' +
       '<span class="node-name">' + esc(c.nodeName) + '</span>' +
       '<button class="locate" data-locate="' + c.nodeId + '" title="Показать в Figma">' +
         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
       '</button>' +
     '</div>' +
     '<div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">' + esc(c.message) + '</div>' +
+    (canDraft ? '<div class="actions"><button class="btn-apply" data-add-comp-draft="' + c.id + '" data-source-name="' + esc(c.componentName || c.nodeName) + '" data-source-node="' + (c.componentNodeId || c.nodeId) + '" data-source-type="' + c.type + '">+ В DS как черновик</button></div>' : '') +
+  '</div>';
+}
+
+function renderAdHocCard(c) {
+  return '<div class="card" data-card-id="' + c.id + '">' +
+    '<div class="card-head">' +
+      '<span class="property" style="background: rgba(91,91,214,0.10); color: var(--accent);">не компонент</span>' +
+      '<span class="node-name">' + esc(c.nodeName) + '</span>' +
+      '<button class="locate" data-locate="' + c.nodeId + '" title="Показать в Figma">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">' + esc(c.message) +
+      (c.textSample ? ' <span style="color: var(--text);">«' + esc(c.textSample) + '»</span>' : '') +
+    '</div>' +
   '</div>';
 }
 
@@ -1114,17 +1200,28 @@ function attachReviewHandlers() {
   });
   $$('[data-fix-color]').forEach(function (b) {
     b.addEventListener('click', function () {
-      send({ type: 'fix-color', id: b.dataset.fixColor, nodeId: b.dataset.node, property: b.dataset.prop, suggested: b.dataset.hex });
+      send({ type: 'fix-color',
+        id: b.dataset.fixColor, nodeId: b.dataset.node, property: b.dataset.prop,
+        suggested: b.dataset.hex,
+        variableKey: b.dataset.vk || null,
+        styleKey: b.dataset.sk || null });
     });
   });
   $$('[data-alt-hex]').forEach(function (b) {
     b.addEventListener('click', function () {
-      send({ type: 'fix-color', id: b.dataset.id, nodeId: b.dataset.node, property: b.dataset.prop, suggested: b.dataset.altHex });
+      send({ type: 'fix-color',
+        id: b.dataset.id, nodeId: b.dataset.node, property: b.dataset.prop,
+        suggested: b.dataset.altHex,
+        variableKey: b.dataset.altVk || null,
+        styleKey: b.dataset.altSk || null });
     });
   });
   $$('[data-fix-typo]').forEach(function (b) {
     b.addEventListener('click', function () {
-      send({ type: 'fix-typography', id: b.dataset.fixTypo, nodeId: b.dataset.node, targetSize: +b.dataset.size, targetLineHeight: +b.dataset.lh, targetWeight: +b.dataset.weight });
+      send({ type: 'fix-typography',
+        id: b.dataset.fixTypo, nodeId: b.dataset.node,
+        targetSize: +b.dataset.size, targetLineHeight: +b.dataset.lh, targetWeight: +b.dataset.weight,
+        styleKey: b.dataset.sk || null });
     });
   });
   $$('[data-fix-outdated]').forEach(function (b) {
@@ -1137,7 +1234,7 @@ function attachReviewHandlers() {
       const ids = (b.dataset.groupIds || '').split(',').filter(Boolean);
       const fixes = ids.map(function (id) {
         const it = state.issues.spacing.find(function (s) { return s.id === id; });
-        return it ? { category: 'spacing', id: it.id, nodeId: it.nodeId, property: it.property, suggested: it.suggested } : null;
+        return it ? { category: 'spacing', id: it.id, nodeId: it.nodeId, property: it.property, suggested: it.suggested, variableKey: it.variableKey || null } : null;
       }).filter(Boolean);
       send({ type: 'fix-all', fixes: fixes });
     });
@@ -1147,46 +1244,36 @@ function attachReviewHandlers() {
       const cat = b.dataset.cat;
       const items = state.issues[cat] || [];
       const fixes = items.filter(function (i) { return !state.fixed.has(i.id); }).map(function (i) {
-        if (cat === 'colors') return { category: 'color', id: i.id, nodeId: i.nodeId, property: i.property, suggested: i.suggested };
-        if (cat === 'spacing') return { category: 'spacing', id: i.id, nodeId: i.nodeId, property: i.property, suggested: i.suggested };
-        if (cat === 'typography') return { category: 'typography', id: i.id, nodeId: i.nodeId, targetSize: i.targetSize, targetLineHeight: i.targetLineHeight, targetWeight: i.targetWeight };
+        if (cat === 'colors') return { category: 'color', id: i.id, nodeId: i.nodeId, property: i.property, suggested: i.suggested, variableKey: i.variableKey || null, styleKey: i.styleKey || null };
+        if (cat === 'spacing') return { category: 'spacing', id: i.id, nodeId: i.nodeId, property: i.property, suggested: i.suggested, variableKey: i.variableKey || null };
+        if (cat === 'typography') return { category: 'typography', id: i.id, nodeId: i.nodeId, targetSize: i.targetSize, targetLineHeight: i.targetLineHeight, targetWeight: i.targetWeight, styleKey: i.styleKey || null };
         if (cat === 'outdated') return { category: 'outdated', id: i.id, nodeId: i.nodeId, componentKey: i.componentKey };
         return null;
       }).filter(Boolean);
       send({ type: 'fix-all', fixes: fixes });
     });
   });
-}
-
-// ============ REVIEW REQUEST ============
-async function requestReview(payload) {
-  try {
-    const res = await fetch(REVIEW_ENDPOINT, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+  $$('[data-add-color-draft]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const hex = b.dataset.hex;
+      const proposed = (b.dataset.node || 'color') + '-' + hex.replace('#', '').toLowerCase();
+      send({ type: 'add-draft', item: { type: 'color', hex: hex, proposedName: proposed, sourceName: b.dataset.node } });
     });
-    if (!res.ok) { const err = await res.text(); toast('GPT error ' + res.status); console.error(err); return; }
-    const data = await res.json();
-    state.review = data;
-    renderReview();
-    // зашлём первое assistant-сообщение в чат с резюме
-    seedChatFromReview(data);
-  } catch (e) {
-    toast('Не удалось связаться с GPT');
-  }
+  });
+  $$('[data-add-comp-draft]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      send({ type: 'add-draft', item: {
+        type: 'component',
+        sourceName: b.dataset.sourceName,
+        sourceNodeId: b.dataset.sourceNode,
+        proposedName: b.dataset.sourceName,
+        kind: b.dataset.sourceType
+      } });
+    });
+  });
 }
 
-function seedChatFromReview(r) {
-  if (state.chat.length > 0) return;
-  let txt = '**Score ' + (r.overall_score || 0) + '/100** — ' + (r.summary || '');
-  if (r.recommendations && r.recommendations.length) {
-    txt += '\n\nКлючевые наблюдения:\n' + r.recommendations.slice(0, 3).map(function (rc, i) {
-      return (i + 1) + '. **' + rc.title + '** — ' + rc.description;
-    }).join('\n');
-  }
-  txt += '\n\nСпросите что-нибудь — могу детальнее по любому пункту, предложить альтернативы или прокомментировать конкретный слой.';
-  pushAssistant(txt);
-}
+// (Авто-обращение к GPT убрано — теперь только по запросу в чате.)
 
 // ============ LIBRARY ============
 function renderLibrary() {
@@ -1240,6 +1327,41 @@ function applyLibFilter(q) {
 }
 
 $('lib-search').addEventListener('input', function (e) { applyLibFilter(e.target.value); });
+
+function renderDrafts() {
+  const box = $('lib-drafts');
+  const btn = $('materialize-btn');
+  $('lib-d-count').textContent = state.drafts.length;
+  btn.disabled = state.drafts.length === 0;
+  if (state.drafts.length === 0) {
+    box.innerHTML = '<div style="padding: 12px; background: var(--bg-card); border: 1px dashed var(--border); border-radius: var(--radius-sm); font-size: 11px; color: var(--text-dim); text-align: center;">Черновиков нет. Добавляйте из Review — кнопкой «+ В DS как черновик».</div>';
+    return;
+  }
+  box.innerHTML = state.drafts.map(function (d) {
+    const sw = d.type === 'color'
+      ? '<div style="width: 28px; height: 28px; border-radius: 6px; background: ' + d.hex + '; border: 1px solid var(--border-strong); flex-shrink: 0;"></div>'
+      : '<div style="width: 28px; height: 28px; border-radius: 6px; background: linear-gradient(135deg, var(--crit), var(--warn)); color: white; display: grid; place-items: center; font-size: 11px; font-weight: 700; flex-shrink: 0;">🔴</div>';
+    return '<div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm);">' +
+      sw +
+      '<div style="flex: 1; min-width: 0;">' +
+        '<div style="font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">' + esc(d.proposedName || d.sourceName || '—') + '</div>' +
+        '<div style="font-size: 10px; color: var(--text-dim); font-family: ui-monospace, monospace;">' + esc(d.type === 'color' ? d.hex : (d.kind || 'component')) + '</div>' +
+      '</div>' +
+      '<button class="locate" data-remove-draft="' + d.id + '" title="Удалить">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>' +
+      '</button>' +
+    '</div>';
+  }).join('');
+  $$('[data-remove-draft]').forEach(function (b) {
+    b.addEventListener('click', function () { send({ type: 'remove-draft', id: b.dataset.removeDraft }); });
+  });
+}
+
+$('materialize-btn').addEventListener('click', function () {
+  if (confirm('Создать страницу «🔴 Drafts» в текущем файле? Используйте это в самом UI Kit Uchi.ru, чтобы черновики попали в DS, а не в макет.')) {
+    send({ type: 'materialize-drafts' });
+  }
+});
 
 // ============ CHAT ============
 const chatText = $('chat-text');

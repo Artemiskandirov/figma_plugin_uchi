@@ -53,7 +53,34 @@ function rgbaToHex({ r, g, b, a }) {
   return a === undefined || a >= 1 ? hex : `${hex}${toHex(a)}`;
 }
 
+// Резолв алиас-цепочки до первичного значения.
+// В Figma переменная может быть VARIABLE_ALIAS на другую переменную, которая
+// тоже может быть алиасом. Идём до первого "сырого" значения, защищаемся от
+// циклов лимитом на 10 шагов.
+function resolveAliasChain(variables, startVarId, modeId, seen) {
+  if (!seen) seen = new Set();
+  if (seen.has(startVarId) || seen.size > 10) return null;
+  seen.add(startVarId);
+
+  const v = variables[startVarId];
+  if (!v) return null;
+  const value = (v.valuesByMode || {})[modeId];
+  if (value == null) {
+    // Если в этом моде нет значения, пробуем дефолтный мод коллекции:
+    // берём любой имеющийся мод.
+    const anyMode = Object.keys(v.valuesByMode || {})[0];
+    if (!anyMode) return null;
+    return resolveAliasChain(variables, startVarId, anyMode, seen);
+  }
+  if (value && typeof value === 'object' && value.type === 'VARIABLE_ALIAS') {
+    return resolveAliasChain(variables, value.id, modeId, seen);
+  }
+  return { value, resolvedFrom: v.name, resolvedFromKey: v.key };
+}
+
 // Преобразуем variables/local в плоский список colors / numbers / strings / booleans.
+// Алиасы резолвятся до примитива; в результат пишется и итоговый hex/число,
+// и имя/ключ исходной (semantic) переменной — её-то плагин и будет биндить.
 function flattenVariables(varsPayload) {
   const out = { colors: [], radii: [], spacing: [], numbers: [], strings: [], booleans: [] };
   if (!varsPayload || !varsPayload.meta) return out;
@@ -72,17 +99,50 @@ function flattenVariables(varsPayload) {
     const modes = v.valuesByMode || {};
     for (const [modeId, value] of Object.entries(modes)) {
       const mode = modeName(v.variableCollectionId, modeId);
-      const base = { name: v.name, collection, mode, scopes: v.scopes };
+      const base = {
+        name: v.name,
+        variableKey: v.key,
+        variableId: v.id,
+        collection,
+        mode,
+        scopes: v.scopes
+      };
 
+      // Случай 1: примитив (raw COLOR / FLOAT / STRING / BOOLEAN)
       if (v.resolvedType === 'COLOR' && value && typeof value === 'object' && 'r' in value) {
-        out.colors.push({ ...base, value: rgbaToHex(value), raw: value });
-      } else if (v.resolvedType === 'COLOR' && value && value.type === 'VARIABLE_ALIAS') {
-        out.colors.push({ ...base, alias: value.id });
-      } else if (v.resolvedType === 'FLOAT') {
+        out.colors.push({ ...base, value: rgbaToHex(value), raw: value, isAlias: false });
+        continue;
+      }
+
+      // Случай 2: алиас — резолвим до примитива
+      if (value && typeof value === 'object' && value.type === 'VARIABLE_ALIAS') {
+        const resolved = resolveAliasChain(variables, value.id, modeId);
+        if (!resolved) continue;
+        const rv = resolved.value;
+        if (v.resolvedType === 'COLOR' && rv && typeof rv === 'object' && 'r' in rv) {
+          out.colors.push({
+            ...base,
+            value: rgbaToHex(rv),
+            raw: rv,
+            isAlias: true,
+            aliasOf: resolved.resolvedFrom,
+            aliasOfKey: resolved.resolvedFromKey
+          });
+        } else if (v.resolvedType === 'FLOAT' && typeof rv === 'number') {
+          const bucket = /radius|corner/i.test(v.name) ? out.radii
+                       : /spac|gap|padding|margin|size/i.test(v.name) ? out.spacing
+                       : out.numbers;
+          bucket.push({ ...base, value: rv, isAlias: true, aliasOf: resolved.resolvedFrom });
+        }
+        continue;
+      }
+
+      // Случай 3: число / строка / булево как примитив
+      if (v.resolvedType === 'FLOAT' && typeof value === 'number') {
         const bucket = /radius|corner/i.test(v.name) ? out.radii
                      : /spac|gap|padding|margin|size/i.test(v.name) ? out.spacing
                      : out.numbers;
-        bucket.push({ ...base, value });
+        bucket.push({ ...base, value, isAlias: false });
       } else if (v.resolvedType === 'STRING') {
         out.strings.push({ ...base, value });
       } else if (v.resolvedType === 'BOOLEAN') {
