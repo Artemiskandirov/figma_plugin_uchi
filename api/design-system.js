@@ -244,19 +244,30 @@ export default async function handler(req, res) {
     return res.status(200).json(cached.value);
   }
 
+  const diagnostics = {
+    fileKey,
+    nodeId,
+    fetchedAt: new Date().toISOString(),
+    endpoints: {}
+  };
+
   try {
     // 1. Метаданные файла
     const meta = await figmaFetch(`/files/${fileKey}?depth=1`, token);
+    diagnostics.endpoints.meta = { status: meta.status, ok: meta.ok };
     if (!meta.ok) return bad(res, meta.status, 'Figma /files (meta) failed', meta.data);
 
     // 2. Стили — работает на любом плане
     const stylesResp = await figmaFetch(`/files/${fileKey}/styles`, token);
+    diagnostics.endpoints.styles = { status: stylesResp.status, ok: stylesResp.ok };
     if (!stylesResp.ok) return bad(res, stylesResp.status, 'Figma /styles failed', stylesResp.data);
     const stylesList = stylesResp.data?.meta?.styles || [];
 
     // 3. Компоненты и сеты
     const compResp = await figmaFetch(`/files/${fileKey}/components`, token);
     const setResp  = await figmaFetch(`/files/${fileKey}/component_sets`, token);
+    diagnostics.endpoints.components = { status: compResp.status, ok: compResp.ok };
+    diagnostics.endpoints.componentSets = { status: setResp.status, ok: setResp.ok };
     const components = (compResp.data?.meta?.components || []).map((c) => ({
       key: c.key,
       name: c.name,
@@ -275,12 +286,31 @@ export default async function handler(req, res) {
     let tokens = { colors: [], typography: [], radii: [], spacing: [], effects: [] };
     let tokensFromVariables = false;
     const varsResp = await figmaFetch(`/files/${fileKey}/variables/local`, token);
+    diagnostics.endpoints.variables = {
+      status: varsResp.status,
+      ok: varsResp.ok,
+      hint: varsResp.ok ? null :
+            varsResp.status === 403 ? 'Variables API доступен только на Figma Enterprise или с правильным scope file_variables:read на токене.' :
+            varsResp.status === 404 ? 'У файла нет переменных, либо токен не имеет доступа к этому файлу.' :
+            'Неизвестная ошибка ' + varsResp.status
+    };
     if (varsResp.ok) {
       const flat = flattenVariables(varsResp.data);
       tokens.colors = flat.colors;
       tokens.radii = flat.radii;
       tokens.spacing = flat.spacing;
       tokensFromVariables = true;
+      const totalRaw = Object.values(varsResp.data?.meta?.variables || {}).length;
+      diagnostics.variables = {
+        totalRaw,
+        colorTokensExtracted: flat.colors.length,
+        colorsAliasResolved: flat.colors.filter((c) => c.isAlias).length,
+        spacingTokens: flat.spacing.length,
+        radiiTokens: flat.radii.length,
+        modesIterated: [...new Set(flat.colors.map((c) => c.mode))]
+      };
+    } else {
+      diagnostics.variables = { totalRaw: 0, colorTokensExtracted: 0, fallbackToStyles: true };
     }
 
     // 5. Если переменных нет — собираем из стилей файла
@@ -301,6 +331,26 @@ export default async function handler(req, res) {
       text:     stylesList.filter((s) => s.style_type === 'TEXT').map((s) => ({ key: s.key, name: s.name, description: s.description, nodeId: s.node_id })),
       effects:  stylesList.filter((s) => s.style_type === 'EFFECT').map((s) => ({ key: s.key, name: s.name, description: s.description, nodeId: s.node_id })),
       grids:    stylesList.filter((s) => s.style_type === 'GRID').map((s) => ({ key: s.key, name: s.name, description: s.description, nodeId: s.node_id }))
+    };
+
+    diagnostics.styles = {
+      fills: grouped.fills.length,
+      text: grouped.text.length,
+      effects: grouped.effects.length,
+      grids: grouped.grids.length
+    };
+    diagnostics.tokens = {
+      colors: tokens.colors.length,
+      typography: tokens.typography.length,
+      radii: tokens.radii.length,
+      spacing: tokens.spacing.length,
+      effects: tokens.effects.length
+    };
+    diagnostics.summary = {
+      source: tokensFromVariables ? 'variables (full DS)' : 'styles only (variables blocked)',
+      warning: !tokensFromVariables
+        ? 'Variables API недоступен (403 или 404). Загружены только цвета/типографика/тени, которые сохранены как Styles в самом UI Kit. Variables, опубликованные в отдельной library, через REST API недоступны.'
+        : null
     };
 
     const result = {
@@ -325,7 +375,8 @@ export default async function handler(req, res) {
         totalComponents: components.length,
         totalComponentSets: componentSets.length,
         totalStyles: stylesList.length
-      }
+      },
+      diagnostics
     };
 
     memCache.set(cacheKey, { at: Date.now(), value: result });

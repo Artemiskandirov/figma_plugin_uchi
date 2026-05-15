@@ -636,6 +636,12 @@ code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; 
     <div class="comp-list" id="lib-comp"></div>
 
     <div class="lib-h">
+      <span>Диагностика загрузки DS</span>
+      <button id="diag-toggle" class="suggest-chip" style="padding: 4px 10px; font-size: 11px;">Показать</button>
+    </div>
+    <div id="lib-diagnostics" style="display: none;"></div>
+
+    <div class="lib-h">
       <span>🔴 Черновики в DS <span class="count" id="lib-d-count"></span></span>
       <button id="materialize-btn" class="suggest-chip" style="padding: 4px 10px; font-size: 11px;" disabled>Создать страницу 🔴 Drafts</button>
     </div>
@@ -710,11 +716,11 @@ const state = {
   ds: null,
   drafts: [],
   fileKey: null,
-  issues: { colors: [], colorsForeign: [], spacing: [], typography: [], outdated: [], components: [], componentsAdHoc: [] },
+  issues: { colors: [], colorsForeign: [], spacing: [], typography: [], effects: [], outdated: [], components: [], componentsAdHoc: [], componentDuplicates: [] },
   fixed: new Set(),
-  reviewContext: null,           // { layoutJson, issues, selectionNames, screenshotBase64 }
+  reviewContext: null,
   dsCompact: null,
-  chat: [],                       // { role: 'user'|'assistant', content }
+  chat: [],
   chatBusy: false
 };
 
@@ -809,7 +815,7 @@ window.onmessage = function (event) {
   }
 
   if (msg.type === 'analyze-result') {
-    state.issues = Object.assign({ colors: [], colorsForeign: [], spacing: [], typography: [], outdated: [], components: [], componentsAdHoc: [] }, msg.issues);
+    state.issues = Object.assign({ colors: [], colorsForeign: [], spacing: [], typography: [], effects: [], outdated: [], components: [], componentsAdHoc: [], componentDuplicates: [] }, msg.issues);
     state.fixed = new Set();
     renderReview();
     $('analyze-btn').disabled = state.selectionCount === 0;
@@ -920,7 +926,7 @@ function renderReviewLoading() {
 function renderReview() {
   const c = $('review-content');
   const i = state.issues;
-  const total = i.colors.length + i.colorsForeign.length + i.spacing.length + i.typography.length + i.outdated.length + i.components.length + i.componentsAdHoc.length;
+  const total = i.colors.length + i.colorsForeign.length + i.spacing.length + i.typography.length + (i.effects || []).length + i.outdated.length + i.components.length + i.componentsAdHoc.length + (i.componentDuplicates || []).length;
 
   let html = '';
 
@@ -980,6 +986,18 @@ function renderReview() {
   if (i.componentsAdHoc.length > 0) {
     html += sectionHeader('Похоже на компонент, но это фрейм', i.componentsAdHoc.length, null);
     html += i.componentsAdHoc.map(renderAdHocCard).join('');
+  }
+
+  // Тени / эффекты не из DS
+  if ((i.effects || []).length > 0) {
+    html += sectionHeader('Тени не из DS', i.effects.length, null);
+    html += i.effects.map(renderEffectCard).join('');
+  }
+
+  // Дубли компонентов
+  if ((i.componentDuplicates || []).length > 0) {
+    html += sectionHeader('Дубли компонентов', i.componentDuplicates.length, null);
+    html += i.componentDuplicates.map(renderDuplicateCard).join('');
   }
 
   c.innerHTML = html;
@@ -1179,6 +1197,46 @@ function renderForeignCompCard(c) {
   '</div>';
 }
 
+function renderEffectCard(c) {
+  return '<div class="card" data-card-id="' + c.id + '">' +
+    '<div class="card-head">' +
+      '<span class="property" style="background: rgba(91,91,214,0.10); color: var(--accent);">' + esc(c.effectType.toLowerCase().replace('_', ' ')) + '</span>' +
+      '<span class="node-name">' + esc(c.nodeName) + '</span>' +
+      '<button class="locate" data-locate="' + c.nodeId + '" title="Показать в Figma">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div style="font-size: 11px; color: var(--text-muted); font-family: ui-monospace, monospace; padding: 6px 8px; background: var(--bg-card); border-radius: var(--radius-sm); margin-bottom: 6px;">' + esc(c.current) + '</div>' +
+    '<div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">' + esc(c.message) +
+      ' — попросите дизайнера добавить эту тень в DS, либо забиндите ближайший Effect Style вручную.</div>' +
+  '</div>';
+}
+
+function renderDuplicateCard(d) {
+  const sev = d.isListLike ? 'info' : 'warning';
+  const sevColor = sev === 'info' ? 'var(--link)' : 'var(--warn)';
+  const sevBg = sev === 'info' ? 'rgba(10,132,255,0.10)' : 'rgba(255,159,10,0.14)';
+  const variantsLine = d.identicalVariants
+    ? 'все идентичны (' + d.count + '×)'
+    : d.count + '× с разными variant‑props';
+  return '<div class="card" data-card-id="' + d.id + '">' +
+    '<div class="card-head">' +
+      '<span class="property" style="background: ' + sevBg + '; color: ' + sevColor + ';">' + d.count + '× ' + (d.isListLike ? 'список' : 'дубль') + '</span>' +
+      '<span class="node-name">' + esc(d.componentName) + '</span>' +
+      '<button class="locate" data-locate="' + d.parentId + '" title="Показать parent в Figma">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">' +
+      '«' + esc(d.componentName) + '» использован <strong>' + d.count + '</strong> раз внутри <strong>' + esc(d.parentName) + '</strong>: ' + variantsLine +
+      (d.isListLike ? '. Похоже на список — скорее всего нормально.' : '. Возможно, это случайный дубль.') +
+    '</div>' +
+    '<div class="actions">' +
+      '<button class="btn-locate" data-ask-gpt-dup="' + d.id + '">Спросить у GPT: это специально?</button>' +
+    '</div>' +
+  '</div>';
+}
+
 function renderAdHocCard(c) {
   return '<div class="card" data-card-id="' + c.id + '">' +
     '<div class="card-head">' +
@@ -1271,6 +1329,19 @@ function attachReviewHandlers() {
       } });
     });
   });
+  $$('[data-ask-gpt-dup]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const dup = (state.issues.componentDuplicates || []).find(function (d) { return d.id === b.dataset.askGptDup; });
+      if (!dup) return;
+      switchTab('chat');
+      const q = 'Внутри `' + dup.parentName + '` компонент `' + dup.componentName + '` использован ' + dup.count +
+        ' раз' + (dup.identicalVariants ? ' с одинаковыми variant‑props' : ' с разными variant‑props') +
+        '. Это специально (список, повтор по дизайну) или случайный дубль? Дай короткий ответ и рекомендацию.';
+      $('chat-text').value = q;
+      $('chat-text').dispatchEvent(new Event('input'));
+      sendChatMessage();
+    });
+  });
 }
 
 // (Авто-обращение к GPT убрано — теперь только по запросу в чате.)
@@ -1284,6 +1355,64 @@ function renderLibrary() {
   $('lib-stat-s').textContent = ds.spacing.length;
   $('lib-stat-k').textContent = ds.components.length;
   applyLibFilter('');
+  renderDiagnostics(ds.diagnostics);
+}
+
+function renderDiagnostics(d) {
+  const box = $('lib-diagnostics');
+  if (!d) {
+    box.innerHTML = '<div style="padding: 12px; background: var(--bg-card); border: 1px dashed var(--border); border-radius: var(--radius-sm); font-size: 11px; color: var(--text-dim); text-align: center;">Диагностика недоступна. Обновите DS.</div>';
+    return;
+  }
+  function row(label, value, ok) {
+    const dot = '<span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:' + (ok === false ? 'var(--crit)' : ok === true ? 'var(--ok)' : 'var(--text-dim)') + '; margin-right:6px;"></span>';
+    return '<div style="display:flex; align-items:center; justify-content:space-between; padding: 5px 10px; border-bottom: 1px solid var(--border); font-size: 11px;"><span style="color: var(--text-muted);">' + dot + label + '</span><span style="font-family: ui-monospace, monospace;">' + value + '</span></div>';
+  }
+  const e = d.endpoints || {};
+  let warning = '';
+  if (d.summary && d.summary.warning) {
+    warning = '<div style="padding: 10px 12px; background: rgba(255,159,10,0.10); border: 1px solid rgba(255,159,10,0.30); border-radius: var(--radius-sm); font-size: 11px; color: var(--text); margin-bottom: 8px; line-height: 1.45;"><strong style="color: var(--warn);">⚠ ' + esc(d.summary.source) + '</strong><br/>' + esc(d.summary.warning) + '</div>';
+  }
+  box.innerHTML = warning +
+    '<div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">' +
+      '<div style="padding: 8px 10px; font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border);">Эндпоинты Figma REST</div>' +
+      row('GET /files/:key (meta)', (e.meta && e.meta.status) || '—', e.meta && e.meta.ok) +
+      row('GET /files/:key/styles', (e.styles && e.styles.status) || '—', e.styles && e.styles.ok) +
+      row('GET /files/:key/variables/local', (e.variables && e.variables.status) || '—', e.variables && e.variables.ok) +
+      row('GET /files/:key/components', (e.components && e.components.status) || '—', e.components && e.components.ok) +
+      row('GET /files/:key/component_sets', (e.componentSets && e.componentSets.status) || '—', e.componentSets && e.componentSets.ok) +
+    '</div>' +
+    (e.variables && !e.variables.ok && e.variables.hint ? '<div style="margin-top: 8px; padding: 8px 10px; background: var(--bg-card); border-left: 3px solid var(--warn); border-radius: var(--radius-sm); font-size: 11px; color: var(--text-muted); line-height: 1.5;">' + esc(e.variables.hint) + '</div>' : '') +
+    (d.variables ? '<div style="margin-top: 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">' +
+      '<div style="padding: 8px 10px; font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border);">Variables</div>' +
+      row('Всего переменных в файле', d.variables.totalRaw) +
+      row('Цветовых токенов вытащено', d.variables.colorTokensExtracted) +
+      row('Из них алиасов', d.variables.colorsAliasResolved || 0) +
+      row('Spacing‑токенов', d.variables.spacingTokens || 0) +
+      row('Radii‑токенов', d.variables.radiiTokens || 0) +
+      (d.variables.modesIterated ? row('Модусы', (d.variables.modesIterated || []).join(', ') || '—') : '') +
+    '</div>' : '') +
+    (d.styles ? '<div style="margin-top: 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">' +
+      '<div style="padding: 8px 10px; font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border);">Styles</div>' +
+      row('Fill styles', d.styles.fills) +
+      row('Text styles', d.styles.text) +
+      row('Effect styles', d.styles.effects) +
+      row('Grid styles', d.styles.grids) +
+    '</div>' : '');
+}
+
+const _origToggleDiag = document.getElementById('diag-toggle');
+if (_origToggleDiag) {
+  _origToggleDiag.addEventListener('click', function () {
+    const box = $('lib-diagnostics');
+    if (box.style.display === 'none') {
+      box.style.display = 'block';
+      _origToggleDiag.textContent = 'Скрыть';
+    } else {
+      box.style.display = 'none';
+      _origToggleDiag.textContent = 'Показать';
+    }
+  });
 }
 
 function applyLibFilter(q) {

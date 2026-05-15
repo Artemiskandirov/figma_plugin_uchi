@@ -12,7 +12,10 @@ const DS_ENDPOINT = VERCEL_BASE + '/api/design-system';
 // ДИЗАЙН-СИСТЕМА (структура и hardcoded fallback)
 // =============================================================================
 
+// effects: [{ name, styleKey?, items: [{ type, color, offset:{x,y}, radius, spread }] }]
+let DS_DIAGNOSTICS = null;
 let DS = {
+  effects: [],
   // primitiveColors: [{ name, hex, variableKey?, styleKey?, isAlias?, aliasOf? }]
   primitiveColors: [
     { name: 'white',            hex: '#FFFFFF' },
@@ -271,6 +274,17 @@ async function loadDSFromVercel() {
     }
     const loadedSpacings = Object.values(spacingByName);
 
+    // === ЭФФЕКТЫ / ТЕНИ ===
+    const loadedEffects = [];
+    for (const e of (data.tokens.effects || [])) {
+      if (!e || !e.name) continue;
+      loadedEffects.push({
+        name: e.name,
+        styleKey: e.styleKey || null,
+        items: e.items || []
+      });
+    }
+
     // === ТИПОГРАФИКА ===
     // Из ответа /api/design-system типографика приходит в tokens.typography (только из стилей).
     const loadedTypo = [];
@@ -314,7 +328,10 @@ async function loadDSFromVercel() {
       DS.spacingScale = loadedSpacings;
     }
     if (loadedTypo.length > 0) DS.typography = loadedTypo;
+    if (loadedEffects.length > 0) DS.effects = loadedEffects;
     if (loadedComponents.length > 0) DS.components = loadedComponents;
+
+    DS_DIAGNOSTICS = data.diagnostics || null;
 
     DS_SOURCE = {
       kind: 'figma',
@@ -412,14 +429,53 @@ function looksLikeAdHocButton(node) {
   return cornerOk && hasFill && sizeOk;
 }
 
+// Сравнение эффекта-в-макете с эффектом-в-DS. Дешёво по 4 ключевым параметрам.
+function effectsApproxEqual(a, b) {
+  if (!a || !b || a.type !== b.type) return false;
+  const cA = a.color || {};
+  const cB = b.color || {};
+  const rgbDist = Math.sqrt(
+    Math.pow((cA.r || 0) - (cB.r || 0), 2) +
+    Math.pow((cA.g || 0) - (cB.g || 0), 2) +
+    Math.pow((cA.b || 0) - (cB.b || 0), 2)
+  );
+  const oxA = a.offset ? a.offset.x : 0;
+  const oyA = a.offset ? a.offset.y : 0;
+  const oxB = b.offset ? b.offset.x : 0;
+  const oyB = b.offset ? b.offset.y : 0;
+  return rgbDist < 0.05 &&
+         Math.abs((a.radius || 0) - (b.radius || 0)) < 1.5 &&
+         Math.abs(oxA - oxB) < 1.5 &&
+         Math.abs(oyA - oyB) < 1.5;
+}
+
+function findEffectMatch(nodeEffect) {
+  for (const e of DS.effects) {
+    if (!e.items || !e.items.length) continue;
+    // e.items[0] — у Effect Style может быть несколько слоёв,
+    // но обычно тень/блюр в одном стиле — один слой.
+    for (const item of e.items) {
+      const styleEffectColor = item.color && typeof item.color === 'string' ?
+        hexToRgb(item.color.length > 7 ? item.color.substring(0, 7) : item.color) :
+        item.color;
+      if (effectsApproxEqual(nodeEffect, { type: item.type, color: styleEffectColor, offset: item.offset, radius: item.radius })) {
+        return e;
+      }
+    }
+  }
+  return null;
+}
+
 function analyzeFrame(rootNode) {
   const issues = {
     colors: [],
     colorsForeign: [],          // цвет не в DS — кандидат на черновик
     spacing: [],
     typography: [],
+    effects: [],                // тени / эффекты не из DS
     components: [],             // foreign / not-in-DS
     componentsAdHoc: [],        // выглядит как кнопка, но не компонент
+    componentDuplicates: [],    // один и тот же компонент дублируется внутри parent'а
     outdated: []
   };
 
@@ -580,6 +636,28 @@ function analyzeFrame(rootNode) {
       instanceNodes.push(node);
     }
 
+    // === ТЕНИ / ЭФФЕКТЫ ===
+    if (!inIllustration && 'effects' in node && Array.isArray(node.effects) && node.effects.length > 0) {
+      for (let i = 0; i < node.effects.length; i++) {
+        const ef = node.effects[i];
+        if (!ef || ef.visible === false) continue;
+        if (ef.type !== 'DROP_SHADOW' && ef.type !== 'INNER_SHADOW' && ef.type !== 'LAYER_BLUR' && ef.type !== 'BACKGROUND_BLUR') continue;
+        if (DS.effects.length === 0) continue; // нечего сравнивать
+        const matched = findEffectMatch(ef);
+        if (!matched) {
+          const colorHex = ef.color ? rgbToHex(ef.color.r, ef.color.g, ef.color.b) : '—';
+          issues.effects.push({
+            id: node.id + '-effect-' + i,
+            nodeId: node.id,
+            nodeName: node.name,
+            effectType: ef.type,
+            current: ef.type + ' ' + colorHex + ' r' + (ef.radius || 0) + (ef.offset ? ' ↘' + ef.offset.x + '/' + ef.offset.y : ''),
+            message: 'Тень не соответствует ни одному эффекту из DS'
+          });
+        }
+      }
+    }
+
     // === "Похоже на кнопку, но не компонент" ===
     if (looksLikeAdHocButton(node)) {
       issues.componentsAdHoc.push({
@@ -602,6 +680,70 @@ function analyzeFrame(rootNode) {
   });
 
   return { issues: issues, layoutSummary: layoutSummary, instanceNodes: instanceNodes };
+}
+
+// =============================================================================
+// ДУБЛИ — один и тот же компонент несколько раз внутри одного parent'а.
+// Это может быть осознанным (список карточек), а может быть случайным
+// (две одинаковых кнопки рядом). Сами не решаем — выдаём кнопкой к GPT.
+// =============================================================================
+async function detectComponentDuplicates(instanceNodes) {
+  const byParentAndKey = {};
+  const mainCache = {};
+
+  for (const inst of instanceNodes) {
+    if (!inst.parent) continue;
+    let main;
+    if (mainCache[inst.id]) main = mainCache[inst.id];
+    else {
+      try { main = await inst.getMainComponentAsync(); } catch (e) { main = null; }
+      mainCache[inst.id] = main;
+    }
+    if (!main || !main.key) continue;
+    const setKey = main.parent && main.parent.type === 'COMPONENT_SET' ? main.parent.key : null;
+    const groupKey = (setKey || main.key);
+    const bucketKey = inst.parent.id + '::' + groupKey;
+    if (!byParentAndKey[bucketKey]) {
+      byParentAndKey[bucketKey] = {
+        parentId: inst.parent.id,
+        parentName: inst.parent.name,
+        parentLayout: inst.parent.layoutMode || 'NONE',
+        componentKey: main.key,
+        componentName: main.name,
+        setKey: setKey,
+        instances: []
+      };
+    }
+    byParentAndKey[bucketKey].instances.push({
+      nodeId: inst.id,
+      nodeName: inst.name,
+      // variant-properties помогут GPT понять, идентичные это карточки или разные стейты
+      variantProps: inst.variantProperties || null,
+      overrides: (inst.componentProperties && Object.keys(inst.componentProperties).length > 0) ? inst.componentProperties : null
+    });
+  }
+
+  const dupes = [];
+  for (const bucket of Object.values(byParentAndKey)) {
+    if (bucket.instances.length < 2) continue;
+    // Эвристика: если parent в auto-layout И все variants identical — скорее всего список (OK).
+    const identicalVariants = bucket.instances.every(function (it) {
+      return JSON.stringify(it.variantProps) === JSON.stringify(bucket.instances[0].variantProps);
+    });
+    const isListLike = (bucket.parentLayout === 'VERTICAL' || bucket.parentLayout === 'HORIZONTAL') && identicalVariants;
+    dupes.push({
+      id: bucket.parentId + '-dup-' + bucket.componentKey,
+      parentId: bucket.parentId,
+      parentName: bucket.parentName,
+      componentName: bucket.componentName,
+      count: bucket.instances.length,
+      instances: bucket.instances,
+      identicalVariants: identicalVariants,
+      isListLike: isListLike,
+      severity: isListLike ? 'info' : 'warning'
+    });
+  }
+  return dupes;
 }
 
 // =============================================================================
@@ -961,8 +1103,10 @@ function sendDSLibrary() {
       colors: DS.primitiveColors,
       typography: DS.typography,
       spacing: DS.spacingScale,
+      effects: DS.effects,
       components: DS.components,
-      source: DS_SOURCE
+      source: DS_SOURCE,
+      diagnostics: DS_DIAGNOSTICS
     }
   });
 }
@@ -1005,8 +1149,8 @@ figma.ui.onmessage = async function (msg) {
     figma.ui.postMessage({ type: 'analyze-start', frameCount: targets.length });
 
     const allIssues = {
-      colors: [], colorsForeign: [], spacing: [], typography: [],
-      components: [], componentsAdHoc: [], outdated: []
+      colors: [], colorsForeign: [], spacing: [], typography: [], effects: [],
+      components: [], componentsAdHoc: [], componentDuplicates: [], outdated: []
     };
     const allInstances = [];
     const layoutSummaries = [];
@@ -1017,6 +1161,7 @@ figma.ui.onmessage = async function (msg) {
       Array.prototype.push.apply(allIssues.colorsForeign, result.issues.colorsForeign);
       Array.prototype.push.apply(allIssues.spacing, result.issues.spacing);
       Array.prototype.push.apply(allIssues.typography, result.issues.typography);
+      Array.prototype.push.apply(allIssues.effects, result.issues.effects);
       Array.prototype.push.apply(allIssues.components, result.issues.components);
       Array.prototype.push.apply(allIssues.componentsAdHoc, result.issues.componentsAdHoc);
       Array.prototype.push.apply(allInstances, result.instanceNodes);
@@ -1028,6 +1173,11 @@ figma.ui.onmessage = async function (msg) {
       Array.prototype.push.apply(allIssues.outdated, compResult.outdated);
       Array.prototype.push.apply(allIssues.components, compResult.components);
     } catch (e) { console.error('outdated detection failed:', e); }
+
+    try {
+      const dupes = await detectComponentDuplicates(allInstances);
+      Array.prototype.push.apply(allIssues.componentDuplicates, dupes);
+    } catch (e) { console.error('duplicates detection failed:', e); }
 
     figma.ui.postMessage({ type: 'analyze-result', issues: allIssues, frameNames: targets.map(function (t) { return t.name; }) });
 
