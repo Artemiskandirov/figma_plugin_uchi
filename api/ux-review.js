@@ -1,11 +1,33 @@
 // Vercel Serverless Function — UX-анализ макета через GPT-5.5
 // POST /api/ux-review
-// Body: { layoutJson, designSystem, screenshotBase64, perspective }
-// perspective: 'designer' | 'child' | 'parent' (default: 'designer')
+// Body: {
+//   layoutJson,              // обязателен: JSON-дерево фрейма из плагина
+//   designSystem,            // опционально: если не передан и useFigmaDS=true,
+//                            // сервер сам подтянет DS из UI Kit Uchi (Figma REST)
+//   useFigmaDS,              // boolean: true → сервер берёт DS из Figma file
+//   figmaFileKey,            // optional override (default: UI Kit Uchi.ru)
+//   figmaNodeId,             // optional
+//   screenshotBase64,
+//   perspective              // 'designer' | 'child' | 'parent'
+// }
 
 export const config = {
   maxDuration: 60
 };
+
+const DEFAULT_FILE_KEY = '8SxJj1kLRNt9ljLQdRa1Ai';
+const DEFAULT_NODE_ID = '2544-2889';
+
+async function fetchFigmaDesignSystem(fileKey, nodeId) {
+  if (!process.env.FIGMA_TOKEN) {
+    throw new Error('FIGMA_TOKEN не задан, не могу подтянуть DS из Figma');
+  }
+  const host = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000';
+  const url = `${host}/api/design-system?fileKey=${encodeURIComponent(fileKey)}&nodeId=${encodeURIComponent(nodeId)}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`design-system endpoint ${r.status}`);
+  return await r.json();
+}
 
 const PROMPTS = {
   designer: `Ты senior product designer и UX-эксперт edtech-платформы Uchi.ru — лидера в детском онлайн-образовании.
@@ -132,10 +154,31 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { layoutJson, designSystem, screenshotBase64, perspective } = req.body || {};
+    let { layoutJson, designSystem, screenshotBase64, perspective, useFigmaDS, figmaFileKey, figmaNodeId } = req.body || {};
 
     if (!layoutJson) {
       return res.status(400).json({ error: 'layoutJson обязателен' });
+    }
+
+    // Если плагин не прислал DS или явно попросил «возьми из Figma» —
+    // тянем актуальную DS из UI Kit Uchi.ru через Figma REST API.
+    let dsSource = 'client';
+    if (!designSystem || useFigmaDS) {
+      try {
+        designSystem = await fetchFigmaDesignSystem(
+          figmaFileKey || DEFAULT_FILE_KEY,
+          figmaNodeId || DEFAULT_NODE_ID
+        );
+        dsSource = 'figma';
+      } catch (err) {
+        if (!designSystem) {
+          return res.status(500).json({
+            error: 'Не удалось получить дизайн-систему из Figma',
+            details: err.message
+          });
+        }
+        dsSource = 'client-fallback';
+      }
     }
 
     const persp = perspective && PROMPTS[perspective] ? perspective : 'designer';
@@ -208,6 +251,16 @@ export default async function handler(req, res) {
     }
 
     parsed.perspective = persp;
+    parsed.designSystemSource = dsSource;
+    if (designSystem?.source?.fileKey) {
+      parsed.designSystemMeta = {
+        fileKey: designSystem.source.fileKey,
+        fileName: designSystem.source.fileName,
+        lastModified: designSystem.source.lastModified,
+        tokensFromVariables: designSystem.source.tokensFromVariables,
+        stats: designSystem.stats
+      };
+    }
     return res.status(200).json(parsed);
   } catch (error) {
     console.error('Handler error:', error);

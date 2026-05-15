@@ -1,7 +1,7 @@
 {
   "name": "uchi-ds-review-server",
-  "version": "1.0.0",
-  "description": "Vercel proxy для GPT-5.5 UX review",
+  "version": "1.1.0",
+  "description": "Vercel-бэкенд Figma-плагина Uchi.ru: GPT-5.5 UX review + источник дизайн-системы из UI Kit Uchi.ru Mobile App через Figma REST API",
   "type": "module",
   "engines": {
     "node": ">=18"
