@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "functions": {
+    "api/ux-review.js": {
+      "maxDuration": 60
+    }
+  }
+}

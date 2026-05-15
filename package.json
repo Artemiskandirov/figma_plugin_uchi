@@ -1,0 +1,9 @@
+{
+  "name": "uchi-ds-review-server",
+  "version": "1.0.0",
+  "description": "Vercel proxy для GPT-5.5 UX review",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  }
+}
