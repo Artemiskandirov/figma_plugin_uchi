@@ -1,3 +1,8 @@
 {
-  "version": 2
+  "version": 2,
+  "functions": {
+    "api/ux-review.js": { "maxDuration": 60 },
+    "api/design-system.js": { "maxDuration": 30 },
+    "api/figma-node.js": { "maxDuration": 30 }
+  }
 }

@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<title>Uchi DS Sync</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 12px;
+    color: var(--figma-color-text, #1e1e1e);
+    background: var(--figma-color-bg, #ffffff);
+    height: 100vh;
+    overflow: hidden;
+  }
+  :root {
+    --accent: #634AD6;
+    --brand:  #FF6170;
+    --error:  #EA3117;
+    --warn:   #FF8811;
+    --ok:     #5FD34C;
+    --muted:  var(--figma-color-text-secondary, #717171);
+    --border: var(--figma-color-border, #e6e6e6);
+    --bg-card: var(--figma-color-bg-secondary, #f5f5f5);
+  }
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* HEADER */
+  .header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+  .header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; }
+  .logo-mark {
+    width: 24px; height: 24px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--accent), var(--brand));
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-weight: 900; font-size: 12px;
+  }
+  .analyze-btn {
+    background: var(--accent); color: white; border: 0; border-radius: 8px;
+    padding: 8px 14px; font-weight: 600; font-size: 12px; cursor: pointer;
+    transition: transform 0.1s, opacity 0.1s;
+  }
+  .analyze-btn:hover { opacity: 0.9; }
+  .analyze-btn:active { transform: scale(0.97); }
+  .analyze-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .selection-info {
+    margin-top: 8px;
+    padding: 6px 10px;
+    background: var(--bg-card);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    display: flex; align-items: center; gap: 6px;
+  }
+  .selection-info.ready { color: var(--figma-color-text); }
+  .selection-info .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--muted);
+  }
+  .selection-info.ready .dot { background: var(--ok); }
+
+  /* SCORE STRIP */
+  .score-strip { display: none; gap: 6px; margin-top: 10px; }
+  .score-strip.show { display: flex; }
+  .score-pill {
+    flex: 1; background: var(--bg-card); padding: 8px 8px; border-radius: 8px;
+    text-align: center; cursor: pointer; border: 1px solid transparent;
+    transition: border-color 0.1s;
+    min-width: 0;
+  }
+  .score-pill:hover { border-color: var(--border); }
+  .score-pill.active {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
+  }
+  .score-pill .count { font-weight: 700; font-size: 15px; line-height: 1; }
+  .score-pill .label { font-size: 9px; color: var(--muted); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
+  .score-pill.ok .count { color: var(--ok); }
+  .score-pill.warn .count { color: var(--warn); }
+  .score-pill.error .count { color: var(--error); }
+
+  /* TABS */
+  .tabs {
+    display: flex; border-bottom: 1px solid var(--border);
+    padding: 0 8px; overflow-x: auto; scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    padding: 10px 10px; cursor: pointer; font-size: 11px; font-weight: 500;
+    color: var(--muted); border-bottom: 2px solid transparent;
+    margin-bottom: -1px; white-space: nowrap;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab .badge {
+    background: var(--error); color: white; border-radius: 8px;
+    padding: 1px 5px; font-size: 9px; font-weight: 700; min-width: 14px;
+    text-align: center;
+  }
+  .tab .badge.empty { display: none; }
+
+  /* CONTENT */
+  .content { flex: 1; overflow-y: auto; padding: 12px; }
+  .pane { display: none; }
+  .pane.active { display: block; }
+
+  /* EMPTY */
+  .empty-state { text-align: center; padding: 32px 16px; color: var(--muted); }
+  .empty-state .icon { font-size: 32px; margin-bottom: 8px; opacity: 0.4; }
+  .empty-state .title { font-size: 13px; font-weight: 600; color: var(--figma-color-text); margin-bottom: 4px; }
+  .empty-state .hint { font-size: 11px; line-height: 1.5; }
+
+  /* ISSUE CARD */
+  .issue-card {
+    background: var(--bg-card); border-radius: 8px; padding: 10px 12px;
+    margin-bottom: 8px; border: 1px solid transparent; transition: border-color 0.1s;
+  }
+  .issue-card:hover { border-color: var(--border); }
+  .issue-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .issue-left { flex: 1; min-width: 0; cursor: pointer; }
+  .issue-name { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
+  .issue-change { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
+  .issue-arrow { color: var(--muted); }
+  .issue-from { color: var(--error); }
+  .issue-to { color: var(--ok); }
+  .fix-btn {
+    background: var(--accent); color: white; border: 0; border-radius: 6px;
+    padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+  }
+  .fix-btn:hover { opacity: 0.9; }
+  .fix-btn.done { background: var(--ok); }
+  .fix-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .swatch {
+    display: inline-block; width: 12px; height: 12px;
+    border-radius: 3px; border: 1px solid var(--border);
+    vertical-align: middle; margin-right: 4px;
+  }
+  .mono { font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace; font-size: 11px; }
+
+  /* FOOTER */
+  .footer { padding: 10px 16px; border-top: 1px solid var(--border); background: var(--figma-color-bg); }
+  .fix-all-btn {
+    width: 100%; background: linear-gradient(135deg, var(--accent), var(--brand));
+    color: white; border: 0; border-radius: 10px; padding: 12px;
+    font-size: 13px; font-weight: 700; cursor: pointer; transition: transform 0.1s;
+  }
+  .fix-all-btn:hover { opacity: 0.95; }
+  .fix-all-btn:active { transform: scale(0.98); }
+  .fix-all-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* PERSPECTIVE SELECTOR */
+  .persona-row {
+    display: flex; gap: 6px; margin-bottom: 12px;
+  }
+  .persona-btn {
+    flex: 1; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 6px; cursor: pointer;
+    text-align: center; transition: all 0.1s;
+  }
+  .persona-btn:hover { border-color: var(--accent); }
+  .persona-btn.active {
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
+    border-color: var(--accent);
+  }
+  .persona-btn .emoji { font-size: 20px; line-height: 1; }
+  .persona-btn .name { font-size: 10px; font-weight: 600; margin-top: 4px; }
+  .persona-btn .desc { font-size: 9px; color: var(--muted); margin-top: 2px; }
+
+  /* UX REVIEW */
+  .ux-summary {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), color-mix(in srgb, var(--brand) 8%, transparent));
+    border-radius: 10px; padding: 14px; margin-bottom: 12px;
+  }
+  .ux-summary .perspective-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--accent); font-weight: 700; margin-bottom: 8px;
+  }
+  .ux-score { display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px; }
+  .ux-score-value {
+    font-size: 32px; font-weight: 800; line-height: 1;
+    background: linear-gradient(135deg, var(--accent), var(--brand));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .ux-score-max { color: var(--muted); font-size: 14px; }
+  .ux-summary-text { font-size: 12px; line-height: 1.5; color: var(--figma-color-text); font-style: italic; }
+
+  .ux-rec {
+    background: var(--bg-card); border-radius: 8px; padding: 12px;
+    margin-bottom: 8px; border-left: 3px solid var(--muted);
+  }
+  .ux-rec.critical { border-left-color: var(--error); }
+  .ux-rec.warning  { border-left-color: var(--warn); }
+  .ux-rec.suggestion { border-left-color: var(--accent); }
+  .ux-rec-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .ux-rec-cat {
+    font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
+    padding: 2px 6px; border-radius: 4px; background: var(--border);
+    color: var(--muted); font-weight: 700;
+  }
+  .ux-rec-title { font-weight: 600; font-size: 12px; flex: 1; }
+  .ux-rec-desc { font-size: 11px; color: var(--figma-color-text); line-height: 1.5; margin-bottom: 8px; }
+  .ux-rec-suggestion {
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    border-radius: 6px; padding: 8px 10px; font-size: 11px; line-height: 1.5;
+    color: var(--figma-color-text);
+  }
+  .ux-rec-suggestion::before { content: '💡 '; margin-right: 4px; }
+  .ux-rec-target { font-size: 10px; color: var(--muted); margin-top: 6px; cursor: pointer; }
+  .ux-rec-target:hover { color: var(--accent); }
+
+  /* SHIMMER */
+  .shimmer {
+    background: linear-gradient(
+      90deg, var(--bg-card) 0%,
+      color-mix(in srgb, var(--accent) 10%, var(--bg-card)) 50%,
+      var(--bg-card) 100%
+    );
+    background-size: 200% 100%; animation: shimmer 1.5s infinite;
+    border-radius: 8px;
+  }
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  .shimmer-block { height: 80px; margin-bottom: 8px; }
+
+  /* TOAST */
+  .toast {
+    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+    background: var(--figma-color-text); color: var(--figma-color-bg);
+    padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 500;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 100;
+  }
+  .toast.show { opacity: 1; }
+
+  /* DS STATUS */
+  .ds-status {
+    font-size: 10px; color: var(--muted); margin-top: 6px;
+    display: flex; align-items: center; gap: 6px;
+    line-height: 1.3;
+  }
+  .ds-status .dot-src {
+    width: 6px; height: 6px; border-radius: 50%; background: var(--muted);
+    flex-shrink: 0;
+  }
+  .ds-status.ok .dot-src { background: var(--ok); }
+  .ds-status.warn .dot-src { background: var(--warn, #FF9F1C); }
+  .ds-status .ds-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .ds-status a {
+    color: var(--figma-color-text-brand, #6366f1);
+    text-decoration: none;
+  }
+  .ds-status a:hover { text-decoration: underline; }
+  .ds-status .refresh {
+    cursor: pointer; padding: 2px 6px; border-radius: 4px;
+    background: transparent; border: 1px solid var(--border, rgba(0,0,0,0.08));
+    color: var(--muted); font-size: 10px;
+    flex-shrink: 0;
+  }
+  .ds-status .refresh:hover { background: var(--bg-card, rgba(0,0,0,0.04)); color: var(--figma-color-text); }
+  .ds-status .refresh:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-row">
+      <div class="logo">
+        <div class="logo-mark">U</div>
+        <span>Uchi DS Sync</span>
+      </div>
+      <button class="analyze-btn" id="analyze-btn" disabled>Analyze</button>
+    </div>
+
+    <div class="selection-info" id="selection-info">
+      <span class="dot"></span>
+      <span id="selection-text">Выдели фрейм или несколько</span>
+    </div>
+
+    <div class="ds-status" id="ds-status">
+      <span class="dot-src"></span>
+      <span class="ds-meta" id="ds-meta">Загружаю дизайн-систему…</span>
+      <button class="refresh" id="ds-refresh" title="Перечитать DS из Figma UI Kit">↻</button>
+    </div>
+
+    <div class="score-strip" id="score-strip">
+      <div class="score-pill" data-tab="colors">
+        <div class="count" id="cnt-colors">0</div>
+        <div class="label">Цвета</div>
+      </div>
+      <div class="score-pill" data-tab="spacing">
+        <div class="count" id="cnt-spacing">0</div>
+        <div class="label">Отступы</div>
+      </div>
+      <div class="score-pill" data-tab="typography">
+        <div class="count" id="cnt-typography">0</div>
+        <div class="label">Шрифты</div>
+      </div>
+      <div class="score-pill" data-tab="outdated">
+        <div class="count" id="cnt-outdated">0</div>
+        <div class="label">Обновл.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TABS -->
+  <div class="tabs" id="tabs">
+    <div class="tab active" data-tab="colors">Цвета <span class="badge empty" id="badge-colors">0</span></div>
+    <div class="tab" data-tab="spacing">Отступы <span class="badge empty" id="badge-spacing">0</span></div>
+    <div class="tab" data-tab="typography">Шрифты <span class="badge empty" id="badge-typography">0</span></div>
+    <div class="tab" data-tab="outdated">Обновления <span class="badge empty" id="badge-outdated">0</span></div>
+    <div class="tab" data-tab="components">Компон. <span class="badge empty" id="badge-components">0</span></div>
+    <div class="tab" data-tab="ux">UX-ревью</div>
+  </div>
+
+  <!-- CONTENT -->
+  <div class="content" id="content">
+    <div class="pane active" id="pane-colors">
+      <div class="empty-state">
+        <div class="icon">🎨</div>
+        <div class="title">Готов к анализу</div>
+        <div class="hint">Выдели один или несколько фреймов в Figma и нажми «Analyze»</div>
+      </div>
+    </div>
+    <div class="pane" id="pane-spacing"><div class="empty-state"><div class="icon">📏</div><div class="title">Анализ не запущен</div></div></div>
+    <div class="pane" id="pane-typography"><div class="empty-state"><div class="icon">🔤</div><div class="title">Анализ не запущен</div></div></div>
+    <div class="pane" id="pane-outdated"><div class="empty-state"><div class="icon">🔄</div><div class="title">Анализ не запущен</div><div class="hint">Здесь покажем компоненты с доступными обновлениями</div></div></div>
+    <div class="pane" id="pane-components"><div class="empty-state"><div class="icon">🧩</div><div class="title">Анализ не запущен</div></div></div>
+
+    <div class="pane" id="pane-ux">
+      <div class="persona-row">
+        <div class="persona-btn active" data-persona="designer">
+          <div class="emoji">🎨</div>
+          <div class="name">Дизайнер</div>
+          <div class="desc">UX-эксперт</div>
+        </div>
+        <div class="persona-btn" data-persona="child">
+          <div class="emoji">👶</div>
+          <div class="name">Ребёнок</div>
+          <div class="desc">9 лет, 3 класс</div>
+        </div>
+        <div class="persona-btn" data-persona="parent">
+          <div class="emoji">👤</div>
+          <div class="name">Родитель</div>
+          <div class="desc">38 лет, мама</div>
+        </div>
+      </div>
+      <div id="ux-content">
+        <div class="empty-state">
+          <div class="icon">✨</div>
+          <div class="title">UX-ревью от GPT-5.5</div>
+          <div class="hint">Выбери персону и запусти Analyze<br>Можно перезапускать для разных персон</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <button class="fix-all-btn" id="fix-all-btn" disabled>Fix all</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const VERCEL_ENDPOINT = 'https://figma-plugin-uchi.vercel.app/api/ux-review';
+
+  let state = {
+    activeTab: 'colors',
+    issues: { colors: [], spacing: [], typography: [], components: [], outdated: [] },
+    uxReview: null,
+    fixed: new Set(),
+    perspective: 'designer',
+    lastPayload: null,
+    selectionCount: 0
+  };
+
+  const $ = function (id) { return document.getElementById(id); };
+  const $$ = function (sel) { return document.querySelectorAll(sel); };
+
+  function showToast(text) {
+    const t = $('toast');
+    t.textContent = text;
+    t.classList.add('show');
+    setTimeout(function () { t.classList.remove('show'); }, 1500);
+  }
+
+  function send(msg) {
+    parent.postMessage({ pluginMessage: msg }, '*');
+  }
+
+  // TABS
+  $$('.tab').forEach(function (tab) {
+    tab.addEventListener('click', function () { switchTab(tab.dataset.tab); });
+  });
+  $$('.score-pill').forEach(function (pill) {
+    pill.addEventListener('click', function () { switchTab(pill.dataset.tab); });
+  });
+
+  function switchTab(name) {
+    state.activeTab = name;
+    $$('.tab').forEach(function (t) { t.classList.toggle('active', t.dataset.tab === name); });
+    $$('.score-pill').forEach(function (p) { p.classList.toggle('active', p.dataset.tab === name); });
+    $$('.pane').forEach(function (p) { p.classList.toggle('active', p.id === 'pane-' + name); });
+
+    const btn = $('fix-all-btn');
+    if (name === 'ux' || name === 'components') {
+      btn.style.display = 'none';
+    } else {
+      btn.style.display = '';
+      const count = state.issues[name] ? state.issues[name].length : 0;
+      const unfixed = state.issues[name] ? state.issues[name].filter(function (i) {
+        return !state.fixed.has(i.id);
+      }).length : 0;
+      btn.disabled = unfixed === 0;
+      const labels = { colors: 'цвета', spacing: 'отступы', typography: 'шрифты', outdated: 'обновления' };
+      btn.textContent = unfixed > 0 ? 'Fix ' + labels[name] + ' (' + unfixed + ')' : 'Nothing to fix';
+    }
+  }
+
+  // PERSONA
+  $$('.persona-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      state.perspective = btn.dataset.persona;
+      $$('.persona-btn').forEach(function (b) { b.classList.toggle('active', b === btn); });
+
+      // если у нас уже есть результат — запрашиваем заново с новой персоной
+      if (state.lastPayload) {
+        showUxLoading();
+        const newPayload = Object.assign({}, state.lastPayload, { perspective: state.perspective });
+        requestUxReview(newPayload);
+      }
+    });
+  });
+
+  // ANALYZE
+  $('analyze-btn').addEventListener('click', function () {
+    if (state.selectionCount === 0) return;
+    send({ type: 'analyze' });
+    $('analyze-btn').disabled = true;
+    $('analyze-btn').textContent = 'Analyzing...';
+  });
+
+  // REFRESH DS
+  $('ds-refresh').addEventListener('click', function () {
+    $('ds-refresh').disabled = true;
+    $('ds-meta').textContent = 'Обновляю DS из Figma UI Kit…';
+    send({ type: 'refresh-ds' });
+  });
+
+  // RENDER
+  function renderIssues() {
+    renderColors();
+    renderSpacing();
+    renderTypography();
+    renderOutdated();
+    renderComponents();
+    updateBadges();
+    updateFixAllButton();
+    $('score-strip').classList.add('show');
+  }
+
+  function updateBadges() {
+    const keys = ['colors', 'spacing', 'typography', 'outdated', 'components'];
+    for (const key of keys) {
+      const total = state.issues[key] ? state.issues[key].length : 0;
+      const remaining = state.issues[key] ? state.issues[key].filter(function (i) {
+        return !state.fixed.has(i.id);
+      }).length : 0;
+
+      const cntEl = $('cnt-' + key);
+      if (cntEl) cntEl.textContent = remaining;
+      const badge = $('badge-' + key);
+      if (badge) {
+        badge.textContent = remaining;
+        badge.classList.toggle('empty', remaining === 0);
+      }
+
+      const pill = document.querySelector('.score-pill[data-tab="' + key + '"]');
+      if (pill) {
+        pill.classList.remove('ok', 'warn', 'error');
+        if (remaining === 0 && total > 0) pill.classList.add('ok');
+        else if (remaining > 0 && remaining <= 3) pill.classList.add('warn');
+        else if (remaining > 3) pill.classList.add('error');
+      }
+    }
+  }
+
+  function updateFixAllButton() { switchTab(state.activeTab); }
+
+  function renderColors() {
+    const pane = $('pane-colors');
+    const list = state.issues.colors;
+    if (list.length === 0) {
+      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Все цвета из DS</div></div>';
+      return;
+    }
+    pane.innerHTML = list.map(function (issue) {
+      const done = state.fixed.has(issue.id);
+      return '<div class="issue-card"><div class="issue-row">' +
+        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
+        '<div class="issue-name">' + escapeHtml(issue.nodeName) + ' · ' + issue.property + '</div>' +
+        '<div class="issue-change">' +
+        '<span class="issue-from"><span class="swatch" style="background:' + issue.current + '"></span><span class="mono">' + issue.current + '</span></span>' +
+        '<span class="issue-arrow">→</span>' +
+        '<span class="issue-to"><span class="swatch" style="background:' + issue.suggested + '"></span><span class="mono">' + issue.suggestedToken + '</span></span>' +
+        '</div></div>' +
+        '<button class="fix-btn ' + (done ? 'done' : '') + '" data-fix="color" data-id="' + issue.id + '" data-node="' + issue.nodeId + '" data-property="' + issue.property + '" data-suggested="' + issue.suggested + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓' : 'Fix') + '</button>' +
+        '</div></div>';
+    }).join('');
+    bindFixButtons(); bindFocusElements();
+  }
+
+  function renderSpacing() {
+    const pane = $('pane-spacing');
+    const list = state.issues.spacing;
+    if (list.length === 0) {
+      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Все отступы по шкале</div></div>';
+      return;
+    }
+    pane.innerHTML = list.map(function (issue) {
+      const done = state.fixed.has(issue.id);
+      return '<div class="issue-card"><div class="issue-row">' +
+        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
+        '<div class="issue-name">' + escapeHtml(issue.nodeName) + ' · ' + issue.property + '</div>' +
+        '<div class="issue-change">' +
+        '<span class="issue-from mono">' + issue.current + 'px</span>' +
+        '<span class="issue-arrow">→</span>' +
+        '<span class="issue-to mono">' + issue.suggested + 'px</span>' +
+        '</div></div>' +
+        '<button class="fix-btn ' + (done ? 'done' : '') + '" data-fix="spacing" data-id="' + issue.id + '" data-node="' + issue.nodeId + '" data-property="' + issue.property + '" data-suggested="' + issue.suggested + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓' : 'Fix') + '</button>' +
+        '</div></div>';
+    }).join('');
+    bindFixButtons(); bindFocusElements();
+  }
+
+  function renderTypography() {
+    const pane = $('pane-typography');
+    const list = state.issues.typography;
+    if (list.length === 0) {
+      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Вся типографика из DS</div></div>';
+      return;
+    }
+    pane.innerHTML = list.map(function (issue) {
+      const done = state.fixed.has(issue.id);
+      return '<div class="issue-card"><div class="issue-row">' +
+        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
+        '<div class="issue-name">' + escapeHtml(issue.nodeName) + '</div>' +
+        '<div class="issue-change">' +
+        '<span class="issue-from mono">' + issue.current + '</span>' +
+        '<span class="issue-arrow">→</span>' +
+        '<span class="issue-to mono">' + issue.suggestedToken + '</span>' +
+        '</div></div>' +
+        '<button class="fix-btn ' + (done ? 'done' : '') + '" data-fix="typography" data-id="' + issue.id + '" data-node="' + issue.nodeId + '" data-size="' + issue.targetSize + '" data-lh="' + issue.targetLineHeight + '" data-weight="' + issue.targetWeight + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓' : 'Fix') + '</button>' +
+        '</div></div>';
+    }).join('');
+    bindFixButtons(); bindFocusElements();
+  }
+
+  function renderOutdated() {
+    const pane = $('pane-outdated');
+    const list = state.issues.outdated;
+    if (list.length === 0) {
+      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Все компоненты актуальны</div><div class="hint">Не нашли устаревших и detached</div></div>';
+      return;
+    }
+    pane.innerHTML = list.map(function (issue) {
+      const done = state.fixed.has(issue.id);
+      const canUpdate = issue.updatable === true;
+      const btnLabel = done ? '✓' : (canUpdate ? 'Update' : 'Goto');
+      const btnAttrs = canUpdate
+        ? 'data-update="' + issue.id + '" data-node="' + issue.nodeId + '" data-key="' + (issue.componentKey || '') + '"'
+        : 'data-focus-btn="' + issue.nodeId + '"';
+      return '<div class="issue-card"><div class="issue-row">' +
+        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
+        '<div class="issue-name">' + escapeHtml(issue.nodeName) + ' · ' + issue.type + '</div>' +
+        '<div class="issue-change"><span class="issue-from">' + escapeHtml(issue.message) + '</span></div>' +
+        '</div>' +
+        '<button class="fix-btn ' + (done ? 'done' : '') + '" ' + btnAttrs + ' ' + (done ? 'disabled' : '') + '>' + btnLabel + '</button>' +
+        '</div></div>';
+    }).join('');
+
+    bindFocusElements();
+    $$('[data-focus-btn]').forEach(function (b) {
+      b.addEventListener('click', function () { send({ type: 'focus-node', nodeId: b.dataset.focusBtn }); });
+    });
+    $$('[data-update]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        send({ type: 'update-outdated', id: b.dataset.update, nodeId: b.dataset.node, componentKey: b.dataset.key });
+      });
+    });
+  }
+
+  function renderComponents() {
+    const pane = $('pane-components');
+    const list = state.issues.components;
+    if (list.length === 0) {
+      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Компоненты в порядке</div></div>';
+      return;
+    }
+    pane.innerHTML = list.map(function (issue) {
+      return '<div class="issue-card"><div class="issue-row">' +
+        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
+        '<div class="issue-name">' + escapeHtml(issue.nodeName) + '</div>' +
+        '<div class="issue-change"><span class="issue-from">' + escapeHtml(issue.message) + '</span></div>' +
+        '</div>' +
+        '<button class="fix-btn" data-focus-btn="' + issue.nodeId + '">Goto</button>' +
+        '</div></div>';
+    }).join('');
+    bindFocusElements();
+    $$('[data-focus-btn]').forEach(function (b) {
+      b.addEventListener('click', function () { send({ type: 'focus-node', nodeId: b.dataset.focusBtn }); });
+    });
+  }
+
+  function bindFocusElements() {
+    $$('[data-focus]').forEach(function (el) {
+      el.addEventListener('click', function () { send({ type: 'focus-node', nodeId: el.dataset.focus }); });
+    });
+  }
+
+  function bindFixButtons() {
+    $$('button[data-fix]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const kind = btn.dataset.fix;
+        const id = btn.dataset.id;
+        if (kind === 'color') {
+          send({ type: 'fix-color', id: id, nodeId: btn.dataset.node, property: btn.dataset.property, suggested: btn.dataset.suggested });
+        } else if (kind === 'spacing') {
+          send({ type: 'fix-spacing', id: id, nodeId: btn.dataset.node, property: btn.dataset.property, suggested: parseFloat(btn.dataset.suggested) });
+        } else if (kind === 'typography') {
+          send({ type: 'fix-typography', id: id, nodeId: btn.dataset.node, targetSize: parseFloat(btn.dataset.size), targetLineHeight: parseFloat(btn.dataset.lh), targetWeight: parseInt(btn.dataset.weight) });
+        }
+      });
+    });
+  }
+
+  $('fix-all-btn').addEventListener('click', function () {
+    const tab = state.activeTab;
+    const list = state.issues[tab] || [];
+    const unfixed = list.filter(function (i) { return !state.fixed.has(i.id); });
+    if (unfixed.length === 0) return;
+
+    const fixes = unfixed.map(function (issue) {
+      if (tab === 'colors') return { category: 'color', id: issue.id, nodeId: issue.nodeId, property: issue.property, suggested: issue.suggested };
+      if (tab === 'spacing') return { category: 'spacing', id: issue.id, nodeId: issue.nodeId, property: issue.property, suggested: issue.suggested };
+      if (tab === 'typography') return { category: 'typography', id: issue.id, nodeId: issue.nodeId, targetSize: issue.targetSize, targetLineHeight: issue.targetLineHeight, targetWeight: issue.targetWeight };
+      if (tab === 'outdated' && issue.updatable) return { category: 'outdated', id: issue.id, nodeId: issue.nodeId, componentKey: issue.componentKey };
+      return null;
+    }).filter(Boolean);
+
+    send({ type: 'fix-all', fixes: fixes });
+  });
+
+  // UX REVIEW
+  function showUxLoading() {
+    $('ux-content').innerHTML =
+      '<div style="text-align:center; padding:8px 0 12px; font-size:11px; color:var(--muted);">' +
+      'GPT-5.5 анализирует макет (10–25 сек)...</div>' +
+      '<div class="shimmer shimmer-block"></div>' +
+      '<div class="shimmer shimmer-block"></div>' +
+      '<div class="shimmer shimmer-block"></div>';
+  }
+
+  async function requestUxReview(payload) {
+    try {
+      const res = await fetch(VERCEL_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        renderUxError('Сервер вернул ошибку: ' + res.status, err);
+        return;
+      }
+      const data = await res.json();
+      state.uxReview = data;
+      renderUxReview(data);
+    } catch (e) {
+      renderUxError('Не удалось связаться с сервером', e.message);
+    }
+  }
+
+  function renderUxError(title, detail) {
+    $('ux-content').innerHTML =
+      '<div class="empty-state">' +
+      '<div class="icon">⚠️</div>' +
+      '<div class="title">' + escapeHtml(title) + '</div>' +
+      '<div class="hint" style="margin-top:8px; text-align:left; font-size:10px; padding: 8px; background: var(--bg-card); border-radius: 6px;">' + escapeHtml(detail || '') + '</div>' +
+      '</div>';
+  }
+
+  function renderUxReview(data) {
+    const recs = data.recommendations || [];
+    const persp = data.perspective || state.perspective;
+    const perspLabels = {
+      designer: '🎨 Глазами дизайнера',
+      child: '👶 Глазами ребёнка (9 лет)',
+      parent: '👤 Глазами родителя (38 лет)'
+    };
+
+    let html =
+      '<div class="ux-summary">' +
+      '<div class="perspective-label">' + (perspLabels[persp] || persp) + '</div>' +
+      '<div class="ux-score">' +
+      '<span class="ux-score-value">' + data.overall_score + '</span>' +
+      '<span class="ux-score-max">/ 100</span>' +
+      '</div>' +
+      '<div class="ux-summary-text">' + escapeHtml(data.summary || '') + '</div>' +
+      '</div>';
+
+    if (recs.length === 0) {
+      html += '<div class="empty-state"><div class="icon">✨</div><div class="title">Замечаний нет</div></div>';
+    } else {
+      html += recs.map(function (rec) {
+        return '<div class="ux-rec ' + rec.severity + '">' +
+          '<div class="ux-rec-head">' +
+          '<span class="ux-rec-cat">' + (rec.category || '') + '</span>' +
+          '<span class="ux-rec-title">' + escapeHtml(rec.title) + '</span>' +
+          '</div>' +
+          '<div class="ux-rec-desc">' + escapeHtml(rec.description) + '</div>' +
+          '<div class="ux-rec-suggestion">' + escapeHtml(rec.suggestion) + '</div>' +
+          (rec.target_layer ? '<div class="ux-rec-target">📍 ' + escapeHtml(rec.target_layer) + '</div>' : '') +
+          '</div>';
+      }).join('');
+    }
+
+    $('ux-content').innerHTML = html;
+  }
+
+  // SELECTION
+  function updateSelectionInfo(count, names) {
+    state.selectionCount = count;
+    const info = $('selection-info');
+    const text = $('selection-text');
+    const btn = $('analyze-btn');
+
+    if (count === 0) {
+      info.classList.remove('ready');
+      text.textContent = 'Выдели фрейм или несколько';
+      btn.disabled = true;
+    } else if (count === 1) {
+      info.classList.add('ready');
+      text.textContent = 'Готов: ' + names[0];
+      btn.disabled = false;
+    } else {
+      info.classList.add('ready');
+      text.textContent = 'Готов: ' + count + ' фрейма';
+      btn.disabled = false;
+    }
+  }
+
+  // MESSAGES
+  window.onmessage = async function (event) {
+    const msg = event.data.pluginMessage;
+    if (!msg) return;
+
+    if (msg.type === 'selection-changed') {
+      updateSelectionInfo(msg.count, msg.names);
+    }
+
+    if (msg.type === 'ds-status') {
+      const el = $('ds-status');
+      const meta = $('ds-meta');
+      const refresh = $('ds-refresh');
+      el.classList.remove('ok', 'warn');
+      refresh.disabled = false;
+
+      const src = msg.source || {};
+      if (src.kind === 'figma') {
+        el.classList.add('ok');
+        const date = src.lastModified ? new Date(src.lastModified).toLocaleDateString('ru-RU') : '';
+        const stats = src.colors + ' цв · ' + src.typography + ' typo · ' + src.components + ' комп';
+        const tail  = msg.localAttached ? ' + local vars' : '';
+        const link  = src.figmaUrl
+          ? '<a href="' + src.figmaUrl + '" target="_blank" rel="noopener">' + escapeHtml(src.fileName || 'UI Kit') + '</a>'
+          : escapeHtml(src.fileName || 'UI Kit');
+        meta.innerHTML = link + ' · ' + stats + (date ? ' · ' + date : '') + tail;
+      } else if (msg.loaded && msg.localAttached) {
+        el.classList.add('ok');
+        meta.textContent = 'DS из local variables текущего файла';
+      } else {
+        el.classList.add('warn');
+        meta.textContent = 'DS: захардкоженный набор' + (msg.reason ? ' · ' + msg.reason : '');
+      }
+    }
+
+    if (msg.type === 'analyze-start') {
+      showUxLoading();
+      switchTab('colors');
+    }
+
+    if (msg.type === 'analyze-result') {
+      state.issues = msg.issues;
+      state.fixed = new Set();
+      renderIssues();
+      $('analyze-btn').disabled = state.selectionCount === 0;
+      $('analyze-btn').textContent = 'Re-analyze';
+    }
+
+    if (msg.type === 'request-ux-review') {
+      const payload = Object.assign({}, msg.payload, { perspective: state.perspective });
+      state.lastPayload = payload;
+      await requestUxReview(payload);
+    }
+
+    if (msg.type === 'fix-result') {
+      if (msg.ok) {
+        state.fixed.add(msg.id);
+        showToast('Исправлено');
+        renderIssues();
+        switchTab(state.activeTab);
+      } else {
+        showToast('Не удалось применить фикс');
+      }
+    }
+
+    if (msg.type === 'fix-all-result') {
+      let ok = 0;
+      for (const r of msg.results) {
+        if (r.ok) { state.fixed.add(r.id); ok++; }
+      }
+      showToast('Исправлено: ' + ok + ' из ' + msg.results.length);
+      renderIssues();
+      switchTab(state.activeTab);
+    }
+
+    if (msg.type === 'error') {
+      showToast(msg.message);
+      $('analyze-btn').disabled = state.selectionCount === 0;
+      $('analyze-btn').textContent = 'Analyze';
+    }
+  };
+
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "Uchi DS Sync",
+  "id": "uchi-ds-sync",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "networkAccess": {
+    "allowedDomains": [
+      "https://figma-plugin-uchi.vercel.app"
+    ],
+    "reasoning": "Отправка макета на UX-ревью через GPT-5.5"
+  }
+}
