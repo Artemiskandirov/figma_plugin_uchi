@@ -857,19 +857,27 @@ async function fixColor(nodeId, property, suggestedHex, variableKey, styleKey) {
   }
 
   // 2. Если нет variableKey, но есть styleKey — биндим Paint Style.
-  if (styleKey && figma.importPaintStyleByKeyAsync) {
+  // Используем унифицированный figma.importStyleByKeyAsync(key) → BaseStyle
+  // и сверяем style.type. Отдельных importPaintStyleByKeyAsync / importTextStyleByKeyAsync
+  // в Plugin API не существует (см. plugin-api.d.ts).
+  if (styleKey && figma.importStyleByKeyAsync) {
     try {
-      const style = await figma.importPaintStyleByKeyAsync(styleKey);
-      if (property === 'fill' && 'fillStyleId' in node) {
-        await node.setFillStyleIdAsync(style.id);
-        return true;
-      }
-      if (property === 'stroke' && 'strokeStyleId' in node) {
-        await node.setStrokeStyleIdAsync(style.id);
-        return true;
+      const style = await figma.importStyleByKeyAsync(styleKey);
+      if (style && style.type === 'PAINT') {
+        if (property === 'fill' && node.setFillStyleIdAsync) {
+          await node.setFillStyleIdAsync(style.id);
+          return true;
+        }
+        if (property === 'stroke' && node.setStrokeStyleIdAsync) {
+          await node.setStrokeStyleIdAsync(style.id);
+          return true;
+        }
+        // Fallback на legacy property (не dynamic-page).
+        if (property === 'fill' && 'fillStyleId' in node) { node.fillStyleId = style.id; return true; }
+        if (property === 'stroke' && 'strokeStyleId' in node) { node.strokeStyleId = style.id; return true; }
       }
     } catch (e) {
-      console.warn('bind style failed, fallback to raw:', e);
+      console.warn('bind paint style failed, fallback to raw:', e);
     }
   }
 
@@ -911,14 +919,21 @@ async function fixTypography(nodeId, targetSize, targetLineHeight, targetWeight,
   if (!node || node.type !== 'TEXT') return false;
 
   // Если есть styleKey — биндим Text Style целиком.
-  if (styleKey && figma.importTextStyleByKeyAsync) {
+  // figma.importStyleByKeyAsync — единственный правильный путь, отдельного
+  // importTextStyleByKeyAsync в API нет.
+  if (styleKey && figma.importStyleByKeyAsync) {
     try {
-      const style = await figma.importTextStyleByKeyAsync(styleKey);
-      // Загружаем шрифт стиля, иначе setTextStyleIdAsync свалится.
-      const fonts = node.fontName ? [node.fontName] : [];
-      for (const f of fonts) { try { await figma.loadFontAsync(f); } catch (e) {} }
-      await node.setTextStyleIdAsync(style.id);
-      return true;
+      const style = await figma.importStyleByKeyAsync(styleKey);
+      if (style && style.type === 'TEXT') {
+        const fonts = node.fontName ? [node.fontName] : [];
+        for (const f of fonts) { try { await figma.loadFontAsync(f); } catch (e) {} }
+        if (node.setTextStyleIdAsync) {
+          await node.setTextStyleIdAsync(style.id);
+        } else if ('textStyleId' in node) {
+          node.textStyleId = style.id;
+        }
+        return true;
+      }
     } catch (e) {
       console.warn('bind text style failed, fallback to raw:', e);
     }
