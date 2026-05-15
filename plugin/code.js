@@ -90,21 +90,31 @@ function hexToRgb(hex) {
 }
 
 function findNearestColor(hex) {
+  const candidates = findColorCandidates(hex, 1);
+  return candidates[0] || null;
+}
+
+// Возвращает топ-N ближайших цветов из DS с метаинформацией (exact, distance, token).
+function findColorCandidates(hex, topN) {
+  if (!topN) topN = 3;
   const target = hexToRgb(hex);
-  let nearest = null;
-  let minDist = Infinity;
+  const all = [];
   for (const c of DS.primitiveColors) {
     const ref = hexToRgb(c.hex);
-    const dist =
+    const dist = Math.sqrt(
       Math.pow(target.r - ref.r, 2) +
       Math.pow(target.g - ref.g, 2) +
-      Math.pow(target.b - ref.b, 2);
-    if (dist < minDist) {
-      minDist = dist;
-      nearest = c;
-    }
+      Math.pow(target.b - ref.b, 2)
+    );
+    all.push({
+      name: c.name,
+      hex: c.hex,
+      distance: dist,
+      exact: dist < 0.005
+    });
   }
-  return Object.assign({}, nearest, { distance: Math.sqrt(minDist) });
+  all.sort(function (a, b) { return a.distance - b.distance; });
+  return all.slice(0, topN);
 }
 
 function findNearestSpacing(value) {
@@ -359,7 +369,8 @@ function analyzeFrame(rootNode) {
         if (fill.type === 'SOLID' && fill.visible !== false) {
           const hex = rgbToHex(fill.color.r, fill.color.g, fill.color.b);
           if (!isColorInDS(hex)) {
-            const nearest = findNearestColor(hex);
+            const candidates = findColorCandidates(hex, 3);
+            const nearest = candidates[0];
             issues.colors.push({
               id: node.id + '-fill',
               nodeId: node.id,
@@ -367,7 +378,9 @@ function analyzeFrame(rootNode) {
               property: 'fill',
               current: hex,
               suggested: nearest.hex,
-              suggestedToken: nearest.name
+              suggestedToken: nearest.name,
+              candidates: candidates,
+              confidence: nearest.distance < 0.05 ? 'high' : nearest.distance < 0.15 ? 'medium' : 'low'
             });
           }
         }
@@ -379,7 +392,8 @@ function analyzeFrame(rootNode) {
         if (stroke.type === 'SOLID' && stroke.visible !== false) {
           const hex = rgbToHex(stroke.color.r, stroke.color.g, stroke.color.b);
           if (!isColorInDS(hex)) {
-            const nearest = findNearestColor(hex);
+            const candidates = findColorCandidates(hex, 3);
+            const nearest = candidates[0];
             issues.colors.push({
               id: node.id + '-stroke',
               nodeId: node.id,
@@ -387,7 +401,9 @@ function analyzeFrame(rootNode) {
               property: 'stroke',
               current: hex,
               suggested: nearest.hex,
-              suggestedToken: nearest.name
+              suggestedToken: nearest.name,
+              candidates: candidates,
+              confidence: nearest.distance < 0.05 ? 'high' : nearest.distance < 0.15 ? 'medium' : 'low'
             });
           }
         }
@@ -715,12 +731,23 @@ figma.showUI(__html__, {
   themeColors: true
 });
 
+function sendDSLibrary() {
+  figma.ui.postMessage({
+    type: 'ds-library',
+    library: {
+      colors: DS.primitiveColors,
+      typography: DS.typography,
+      spacing: DS.spacingScale,
+      components: DS.components,
+      source: DS_SOURCE
+    }
+  });
+}
+
 // На старте грузим DS из первоисточника (Figma UI Kit через Vercel),
 // потом, как бонус, мерджим local variables текущего файла, если они есть.
 async function bootstrapDS() {
   const vercelResult = await loadDSFromVercel();
-
-  // Local variables как дополнение (не перезаписывает то, что пришло из Vercel)
   let localResult = null;
   try { localResult = await tryLoadDSFromFile(); } catch (e) { /* ignore */ }
 
@@ -731,6 +758,7 @@ async function bootstrapDS() {
     localAttached: !!(localResult && localResult.loaded),
     reason: vercelResult.loaded ? null : (vercelResult.reason || (localResult && localResult.reason))
   });
+  sendDSLibrary();
 }
 
 bootstrapDS();
@@ -796,18 +824,22 @@ figma.ui.onmessage = async function (msg) {
       components: DS.components.slice(0, 10)
     };
 
+    const reviewContext = {
+      layoutJson: layoutSummaries.length === 1 ? layoutSummaries[0] : layoutSummaries,
+      issues: allIssues,
+      selectionNames: targets.map(function (t) { return t.name; }),
+      screenshotBase64: screenshot
+    };
+
     figma.ui.postMessage({
       type: 'request-ux-review',
       payload: {
-        layoutJson: layoutSummaries.length === 1 ? layoutSummaries[0] : layoutSummaries,
-        // Просим сервер взять DS из Figma UI Kit (первоисточник),
-        // компактную клиентскую DS шлём как резерв на случай, если бэкенду
-        // не удастся достучаться до Figma API.
+        layoutJson: reviewContext.layoutJson,
         useFigmaDS: true,
         designSystem: dsCompact,
         screenshotBase64: screenshot
-        // perspective добавляется в ui.html перед отправкой
-      }
+      },
+      context: reviewContext
     });
   }
 
@@ -864,6 +896,11 @@ figma.ui.onmessage = async function (msg) {
       localAttached: !!(localResult && localResult.loaded),
       reason: vercelResult.loaded ? null : (vercelResult.reason || (localResult && localResult.reason))
     });
+    sendDSLibrary();
+  }
+
+  if (msg.type === 'request-library') {
+    sendDSLibrary();
   }
 
   if (msg.type === 'close') {

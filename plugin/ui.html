@@ -1,850 +1,1322 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8" />
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Uchi DS Sync</title>
 <style>
-  * { box-sizing: border-box; }
-  html, body {
-    margin: 0; padding: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    font-size: 12px;
-    color: var(--figma-color-text, #1e1e1e);
-    background: var(--figma-color-bg, #ffffff);
-    height: 100vh;
-    overflow: hidden;
-  }
-  :root {
-    --accent: #634AD6;
-    --brand:  #FF6170;
-    --error:  #EA3117;
-    --warn:   #FF8811;
-    --ok:     #5FD34C;
-    --muted:  var(--figma-color-text-secondary, #717171);
-    --border: var(--figma-color-border, #e6e6e6);
-    --bg-card: var(--figma-color-bg-secondary, #f5f5f5);
-  }
-  .app { display: flex; flex-direction: column; height: 100vh; }
+:root {
+  --bg:          var(--figma-color-bg, #fff);
+  --bg-elev:     var(--figma-color-bg-secondary, #f7f7f9);
+  --bg-card:    var(--figma-color-bg-tertiary, #fbfbfd);
+  --text:        var(--figma-color-text, #0a0a0f);
+  --text-muted:  var(--figma-color-text-secondary, #6b6b76);
+  --text-dim:    var(--figma-color-text-tertiary, #9a9aa3);
+  --border:      var(--figma-color-border, rgba(0,0,0,0.08));
+  --border-strong: var(--figma-color-border-strong, rgba(0,0,0,0.12));
+  --accent:      #5B5BD6;
+  --accent-2:    #8B5CF6;
+  --ok:          #34C759;
+  --warn:        #FF9F0A;
+  --crit:        #FF3B30;
+  --link:        #0A84FF;
 
-  /* HEADER */
-  .header { padding: 12px 16px; border-bottom: 1px solid var(--border); }
-  .header-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .logo { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; }
-  .logo-mark {
-    width: 24px; height: 24px; border-radius: 7px;
-    background: linear-gradient(135deg, var(--accent), var(--brand));
-    display: flex; align-items: center; justify-content: center;
-    color: white; font-weight: 900; font-size: 12px;
-  }
-  .analyze-btn {
-    background: var(--accent); color: white; border: 0; border-radius: 8px;
-    padding: 8px 14px; font-weight: 600; font-size: 12px; cursor: pointer;
-    transition: transform 0.1s, opacity 0.1s;
-  }
-  .analyze-btn:hover { opacity: 0.9; }
-  .analyze-btn:active { transform: scale(0.97); }
-  .analyze-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+  --radius-sm: 8px;
+  --radius:    12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
 
-  .selection-info {
-    margin-top: 8px;
-    padding: 6px 10px;
-    background: var(--bg-card);
-    border-radius: 6px;
-    font-size: 11px;
-    color: var(--muted);
-    display: flex; align-items: center; gap: 6px;
-  }
-  .selection-info.ready { color: var(--figma-color-text); }
-  .selection-info .dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--muted);
-  }
-  .selection-info.ready .dot { background: var(--ok); }
+  --shadow-1: 0 1px 2px rgba(0,0,0,0.04), 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-2: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.06);
+  --shadow-pop: 0 12px 36px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06);
 
-  /* SCORE STRIP */
-  .score-strip { display: none; gap: 6px; margin-top: 10px; }
-  .score-strip.show { display: flex; }
-  .score-pill {
-    flex: 1; background: var(--bg-card); padding: 8px 8px; border-radius: 8px;
-    text-align: center; cursor: pointer; border: 1px solid transparent;
-    transition: border-color 0.1s;
-    min-width: 0;
-  }
-  .score-pill:hover { border-color: var(--border); }
-  .score-pill.active {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 8%, var(--bg-card));
-  }
-  .score-pill .count { font-weight: 700; font-size: 15px; line-height: 1; }
-  .score-pill .label { font-size: 9px; color: var(--muted); margin-top: 3px; text-transform: uppercase; letter-spacing: 0.3px; }
-  .score-pill.ok .count { color: var(--ok); }
-  .score-pill.warn .count { color: var(--warn); }
-  .score-pill.error .count { color: var(--error); }
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
 
-  /* TABS */
-  .tabs {
-    display: flex; border-bottom: 1px solid var(--border);
-    padding: 0 8px; overflow-x: auto; scrollbar-width: none;
-  }
-  .tabs::-webkit-scrollbar { display: none; }
-  .tab {
-    padding: 10px 10px; cursor: pointer; font-size: 11px; font-weight: 500;
-    color: var(--muted); border-bottom: 2px solid transparent;
-    margin-bottom: -1px; white-space: nowrap;
-    display: flex; align-items: center; gap: 5px;
-  }
-  .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
-  .tab .badge {
-    background: var(--error); color: white; border-radius: 8px;
-    padding: 1px 5px; font-size: 9px; font-weight: 700; min-width: 14px;
-    text-align: center;
-  }
-  .tab .badge.empty { display: none; }
+* { box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+html, body {
+  margin: 0; padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  height: 100vh;
+  overflow: hidden;
+}
+body { display: flex; flex-direction: column; }
+button { font: inherit; color: inherit; cursor: pointer; border: none; background: transparent; }
+button:disabled { cursor: default; opacity: 0.5; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; background: var(--bg-card); padding: 1px 5px; border-radius: 5px; }
 
-  /* CONTENT */
-  .content { flex: 1; overflow-y: auto; padding: 12px; }
-  .pane { display: none; }
-  .pane.active { display: block; }
+/* ========== HEADER ========== */
+.header {
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.header-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.brand {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 14px; font-weight: 600; letter-spacing: -0.01em;
+}
+.brand-mark {
+  width: 22px; height: 22px; border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  color: white; display: grid; place-items: center;
+  font-weight: 700; font-size: 12px;
+  box-shadow: 0 2px 6px rgba(91, 91, 214, 0.3);
+}
 
-  /* EMPTY */
-  .empty-state { text-align: center; padding: 32px 16px; color: var(--muted); }
-  .empty-state .icon { font-size: 32px; margin-bottom: 8px; opacity: 0.4; }
-  .empty-state .title { font-size: 13px; font-weight: 600; color: var(--figma-color-text); margin-bottom: 4px; }
-  .empty-state .hint { font-size: 11px; line-height: 1.5; }
+/* DS pill */
+.ds-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px 4px 7px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 100px; font-size: 11px; color: var(--text-muted);
+  cursor: pointer;
+  transition: all 200ms var(--ease);
+  max-width: 100%;
+}
+.ds-pill:hover { background: var(--bg-elev); border-color: var(--border-strong); color: var(--text); }
+.ds-pill .dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--text-dim);
+  box-shadow: 0 0 0 3px transparent;
+  transition: all 300ms var(--ease);
+}
+.ds-pill.ok    .dot { background: var(--ok);   box-shadow: 0 0 0 3px rgba(52,199,89,0.16); }
+.ds-pill.warn  .dot { background: var(--warn); box-shadow: 0 0 0 3px rgba(255,159,10,0.18); }
+.ds-pill.bad   .dot { background: var(--crit); box-shadow: 0 0 0 3px rgba(255,59,48,0.16); }
+.ds-pill .name { font-weight: 500; color: var(--text); }
+.ds-pill .meta { color: var(--text-dim); }
 
-  /* ISSUE CARD */
-  .issue-card {
-    background: var(--bg-card); border-radius: 8px; padding: 10px 12px;
-    margin-bottom: 8px; border: 1px solid transparent; transition: border-color 0.1s;
-  }
-  .issue-card:hover { border-color: var(--border); }
-  .issue-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .issue-left { flex: 1; min-width: 0; cursor: pointer; }
-  .issue-name { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 3px; }
-  .issue-change { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
-  .issue-arrow { color: var(--muted); }
-  .issue-from { color: var(--error); }
-  .issue-to { color: var(--ok); }
-  .fix-btn {
-    background: var(--accent); color: white; border: 0; border-radius: 6px;
-    padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer; flex-shrink: 0;
-  }
-  .fix-btn:hover { opacity: 0.9; }
-  .fix-btn.done { background: var(--ok); }
-  .fix-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* selection */
+.selection {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 11px; border-radius: var(--radius);
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-size: 12px;
+}
+.selection .sel-icon {
+  width: 16px; height: 16px; border-radius: 5px;
+  border: 1.5px dashed var(--text-dim);
+}
+.selection.ready .sel-icon {
+  border-style: solid; border-color: var(--accent);
+  background: linear-gradient(135deg, rgba(91,91,214,0.12), rgba(139,92,246,0.12));
+}
+.selection .sel-text { flex: 1; color: var(--text-muted); }
+.selection.ready .sel-text { color: var(--text); }
+.selection.ready .sel-text strong { color: var(--text); font-weight: 600; }
 
-  .swatch {
-    display: inline-block; width: 12px; height: 12px;
-    border-radius: 3px; border: 1px solid var(--border);
-    vertical-align: middle; margin-right: 4px;
-  }
-  .mono { font-family: 'JetBrains Mono', 'SF Mono', Menlo, monospace; font-size: 11px; }
+.analyze-btn {
+  padding: 8px 16px; border-radius: 100px;
+  background: var(--text); color: var(--bg); font-weight: 600; font-size: 13px;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: all 180ms var(--ease);
+  white-space: nowrap;
+}
+.analyze-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: var(--shadow-2); }
+.analyze-btn:active:not(:disabled) { transform: translateY(0); }
+.analyze-btn:disabled { background: var(--bg-card); color: var(--text-dim); }
+.analyze-btn .arrow { transition: transform 200ms var(--ease); }
+.analyze-btn:hover:not(:disabled) .arrow { transform: translateX(2px); }
 
-  /* FOOTER */
-  .footer { padding: 10px 16px; border-top: 1px solid var(--border); background: var(--figma-color-bg); }
-  .fix-all-btn {
-    width: 100%; background: linear-gradient(135deg, var(--accent), var(--brand));
-    color: white; border: 0; border-radius: 10px; padding: 12px;
-    font-size: 13px; font-weight: 700; cursor: pointer; transition: transform 0.1s;
-  }
-  .fix-all-btn:hover { opacity: 0.95; }
-  .fix-all-btn:active { transform: scale(0.98); }
-  .fix-all-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+/* ========== SEGMENTED CONTROL ========== */
+.segmented {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
+  background: var(--bg-card); border-radius: 10px; padding: 3px;
+  margin: 0 16px;
+  border: 1px solid var(--border);
+  position: relative;
+}
+.seg {
+  position: relative; z-index: 1;
+  padding: 6px 8px; border-radius: 7px;
+  font-size: 12px; font-weight: 500; color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  transition: color 220ms var(--ease);
+}
+.seg .pill-count {
+  font-size: 10px; padding: 1px 6px; border-radius: 100px;
+  background: var(--bg); color: var(--text-muted);
+  border: 1px solid var(--border);
+  min-width: 18px; text-align: center;
+}
+.seg.active {
+  background: var(--bg); color: var(--text);
+  box-shadow: var(--shadow-1);
+  font-weight: 600;
+}
+.seg.active .pill-count { background: var(--accent); color: white; border-color: transparent; }
 
-  /* PERSPECTIVE SELECTOR */
-  .persona-row {
-    display: flex; gap: 6px; margin-bottom: 12px;
-  }
-  .persona-btn {
-    flex: 1; background: var(--bg-card); border: 1px solid var(--border);
-    border-radius: 8px; padding: 8px 6px; cursor: pointer;
-    text-align: center; transition: all 0.1s;
-  }
-  .persona-btn:hover { border-color: var(--accent); }
-  .persona-btn.active {
-    background: color-mix(in srgb, var(--accent) 10%, var(--bg-card));
-    border-color: var(--accent);
-  }
-  .persona-btn .emoji { font-size: 20px; line-height: 1; }
-  .persona-btn .name { font-size: 10px; font-weight: 600; margin-top: 4px; }
-  .persona-btn .desc { font-size: 9px; color: var(--muted); margin-top: 2px; }
+/* ========== CONTENT ========== */
+.scroll {
+  flex: 1; overflow-y: auto; overflow-x: hidden;
+  padding: 14px 16px 16px;
+  scroll-behavior: smooth;
+}
+.scroll::-webkit-scrollbar { width: 6px; }
+.scroll::-webkit-scrollbar-track { background: transparent; }
+.scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.scroll::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+.pane { display: none; animation: fadeUp 300ms var(--ease); }
+.pane.active { display: block; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-  /* UX REVIEW */
-  .ux-summary {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 8%, transparent), color-mix(in srgb, var(--brand) 8%, transparent));
-    border-radius: 10px; padding: 14px; margin-bottom: 12px;
-  }
-  .ux-summary .perspective-label {
-    font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px;
-    color: var(--accent); font-weight: 700; margin-bottom: 8px;
-  }
-  .ux-score { display: flex; align-items: baseline; gap: 6px; margin-bottom: 6px; }
-  .ux-score-value {
-    font-size: 32px; font-weight: 800; line-height: 1;
-    background: linear-gradient(135deg, var(--accent), var(--brand));
-    -webkit-background-clip: text; background-clip: text; color: transparent;
-  }
-  .ux-score-max { color: var(--muted); font-size: 14px; }
-  .ux-summary-text { font-size: 12px; line-height: 1.5; color: var(--figma-color-text); font-style: italic; }
+.empty {
+  text-align: center; padding: 60px 20px;
+  color: var(--text-dim);
+}
+.empty .icon {
+  width: 56px; height: 56px; border-radius: 18px; margin: 0 auto 14px;
+  background: linear-gradient(135deg, var(--bg-card), var(--bg-elev));
+  border: 1px solid var(--border);
+  display: grid; place-items: center; font-size: 26px;
+}
+.empty .title { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.empty .hint { font-size: 12px; line-height: 1.5; max-width: 240px; margin: 0 auto; }
 
-  .ux-rec {
-    background: var(--bg-card); border-radius: 8px; padding: 12px;
-    margin-bottom: 8px; border-left: 3px solid var(--muted);
-  }
-  .ux-rec.critical { border-left-color: var(--error); }
-  .ux-rec.warning  { border-left-color: var(--warn); }
-  .ux-rec.suggestion { border-left-color: var(--accent); }
-  .ux-rec-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
-  .ux-rec-cat {
-    font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
-    padding: 2px 6px; border-radius: 4px; background: var(--border);
-    color: var(--muted); font-weight: 700;
-  }
-  .ux-rec-title { font-weight: 600; font-size: 12px; flex: 1; }
-  .ux-rec-desc { font-size: 11px; color: var(--figma-color-text); line-height: 1.5; margin-bottom: 8px; }
-  .ux-rec-suggestion {
-    background: color-mix(in srgb, var(--accent) 6%, transparent);
-    border-radius: 6px; padding: 8px 10px; font-size: 11px; line-height: 1.5;
-    color: var(--figma-color-text);
-  }
-  .ux-rec-suggestion::before { content: '💡 '; margin-right: 4px; }
-  .ux-rec-target { font-size: 10px; color: var(--muted); margin-top: 6px; cursor: pointer; }
-  .ux-rec-target:hover { color: var(--accent); }
+/* ========== REVIEW PANE ========== */
+.score-card {
+  padding: 16px; border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(91,91,214,0.06), rgba(139,92,246,0.04));
+  border: 1px solid var(--border);
+  margin-bottom: 14px;
+}
+.score-row {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 8px;
+}
+.score-num { font-size: 36px; font-weight: 700; letter-spacing: -0.04em; color: var(--text); line-height: 1; }
+.score-max { font-size: 14px; color: var(--text-dim); }
+.score-tag {
+  margin-left: auto;
+  padding: 3px 10px; border-radius: 100px; font-size: 10px;
+  font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.score-tag.good  { background: rgba(52,199,89,0.12);  color: var(--ok); }
+.score-tag.ok    { background: rgba(255,159,10,0.14); color: var(--warn); }
+.score-tag.bad   { background: rgba(255,59,48,0.12);  color: var(--crit); }
+.score-summary { font-size: 13px; line-height: 1.45; color: var(--text-muted); }
+.score-persona {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-bottom: 8px; padding: 3px 9px; border-radius: 100px;
+  background: var(--bg); border: 1px solid var(--border); font-size: 11px; color: var(--text-muted);
+}
 
-  /* SHIMMER */
-  .shimmer {
-    background: linear-gradient(
-      90deg, var(--bg-card) 0%,
-      color-mix(in srgb, var(--accent) 10%, var(--bg-card)) 50%,
-      var(--bg-card) 100%
-    );
-    background-size: 200% 100%; animation: shimmer 1.5s infinite;
-    border-radius: 8px;
-  }
-  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-  .shimmer-block { height: 80px; margin-bottom: 8px; }
+.section-h {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 18px 0 10px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.section-h .fix-all {
+  font-size: 11px; text-transform: none; letter-spacing: 0;
+  padding: 4px 10px; border-radius: 100px;
+  background: var(--text); color: var(--bg);
+  font-weight: 600;
+  transition: all 180ms var(--ease);
+}
+.section-h .fix-all:hover:not(:disabled) { transform: scale(1.03); }
+.section-h .fix-all:disabled { background: var(--bg-card); color: var(--text-dim); }
 
-  /* TOAST */
-  .toast {
-    position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
-    background: var(--figma-color-text); color: var(--figma-color-bg);
-    padding: 8px 14px; border-radius: 8px; font-size: 12px; font-weight: 500;
-    opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 100;
-  }
-  .toast.show { opacity: 1; }
+.card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 8px;
+  transition: all 200ms var(--ease);
+}
+.card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-1); }
+.card.fixed { opacity: 0.45; }
+.card.fixed .actions { display: none; }
+.card.fixed::after {
+  content: '✓ исправлено'; font-size: 10px; color: var(--ok); font-weight: 600;
+  display: block; margin-top: 8px;
+}
 
-  /* DS STATUS */
-  .ds-status {
-    font-size: 10px; color: var(--muted); margin-top: 6px;
-    display: flex; align-items: center; gap: 6px;
-    line-height: 1.3;
-  }
-  .ds-status .dot-src {
-    width: 6px; height: 6px; border-radius: 50%; background: var(--muted);
-    flex-shrink: 0;
-  }
-  .ds-status.ok .dot-src { background: var(--ok); }
-  .ds-status.warn .dot-src { background: var(--warn, #FF9F1C); }
-  .ds-status .ds-meta { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .ds-status a {
-    color: var(--figma-color-text-brand, #6366f1);
-    text-decoration: none;
-  }
-  .ds-status a:hover { text-decoration: underline; }
-  .ds-status .refresh {
-    cursor: pointer; padding: 2px 6px; border-radius: 4px;
-    background: transparent; border: 1px solid var(--border, rgba(0,0,0,0.08));
-    color: var(--muted); font-size: 10px;
-    flex-shrink: 0;
-  }
-  .ds-status .refresh:hover { background: var(--bg-card, rgba(0,0,0,0.04)); color: var(--figma-color-text); }
-  .ds-status .refresh:disabled { opacity: 0.5; cursor: default; }
+.card-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 10px;
+}
+.card-head .node-name {
+  font-size: 12px; font-weight: 500; color: var(--text);
+  flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.card-head .property {
+  font-size: 10px; padding: 2px 6px; border-radius: 4px;
+  background: var(--bg-card); color: var(--text-muted); font-weight: 500;
+}
+.locate {
+  width: 22px; height: 22px; border-radius: 6px;
+  display: grid; place-items: center;
+  background: transparent; color: var(--text-dim);
+  transition: all 180ms var(--ease);
+}
+.locate:hover { background: var(--bg-card); color: var(--accent); }
+
+/* color swap visual */
+.color-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px; border-radius: var(--radius-sm); background: var(--bg-card);
+  margin-bottom: 10px;
+}
+.swatch {
+  width: 32px; height: 32px; border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  position: relative; flex-shrink: 0;
+}
+.swatch .swatch-hex {
+  position: absolute; bottom: -16px; left: 50%; transform: translateX(-50%);
+  font-size: 9px; font-family: ui-monospace, "SF Mono", monospace; color: var(--text-dim);
+  white-space: nowrap;
+}
+.swatch-arrow { color: var(--text-dim); margin: 0 2px; }
+.color-row .info { flex: 1; min-width: 0; }
+.color-row .token {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  display: flex; align-items: center; gap: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.confidence-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.confidence-dot.high { background: var(--ok); }
+.confidence-dot.medium { background: var(--warn); }
+.confidence-dot.low { background: var(--text-dim); }
+.color-row .hexline {
+  font-size: 10px; color: var(--text-muted); font-family: ui-monospace, "SF Mono", monospace;
+  margin-top: 2px;
+}
+
+.alt-candidates {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 8px; padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+.alt-candidates .label { font-size: 10px; color: var(--text-dim); margin-right: 4px; align-self: center; }
+.alt-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 4px; border-radius: 100px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-size: 10px; color: var(--text-muted);
+  transition: all 150ms var(--ease);
+}
+.alt-chip:hover { background: var(--bg-elev); color: var(--text); }
+.alt-chip .mini-swatch { width: 12px; height: 12px; border-radius: 50%; border: 1px solid var(--border-strong); }
+
+/* spacing visual */
+.spacing-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+.spacing-row .prop { font-size: 11px; color: var(--text-muted); min-width: 110px; font-family: ui-monospace, monospace; }
+.spacing-row .val-current,
+.spacing-row .val-suggested {
+  font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+  font-family: ui-monospace, monospace;
+}
+.spacing-row .val-current   { background: rgba(255,59,48,0.08);  color: var(--crit); }
+.spacing-row .val-suggested { background: rgba(52,199,89,0.10); color: var(--ok); }
+.spacing-row .arrow { color: var(--text-dim); }
+
+/* typography preview */
+.type-preview {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px; border-radius: var(--radius-sm); background: var(--bg-card);
+  margin-bottom: 8px;
+}
+.type-preview .specs { font-size: 10px; color: var(--text-dim); font-family: ui-monospace, monospace; }
+.type-preview .sample { font-weight: 500; }
+.type-preview.was .sample { color: var(--crit); text-decoration: line-through; opacity: 0.6; }
+.type-preview.will .sample { color: var(--ok); }
+
+.actions { display: flex; gap: 6px; margin-top: 6px; }
+.btn-apply, .btn-locate {
+  padding: 6px 12px; border-radius: 100px; font-size: 11px; font-weight: 600;
+  transition: all 180ms var(--ease);
+}
+.btn-apply { background: var(--text); color: var(--bg); }
+.btn-apply:hover { transform: scale(1.03); }
+.btn-locate {
+  background: var(--bg-card); color: var(--text); border: 1px solid var(--border);
+}
+.btn-locate:hover { background: var(--bg-elev); }
+
+/* Outdated */
+.outdated-card {
+  background: linear-gradient(135deg, rgba(10,132,255,0.04), rgba(91,91,214,0.04));
+  border-color: rgba(10,132,255,0.15);
+}
+.outdated-card .badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; padding: 2px 7px; border-radius: 100px;
+  background: rgba(10,132,255,0.10); color: var(--link); font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.03em;
+}
+.outdated-card .msg { font-size: 12px; color: var(--text); margin: 6px 0 4px; line-height: 1.45; }
+
+/* ========== LIBRARY PANE ========== */
+.lib-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+  margin-bottom: 16px;
+}
+.lib-stat {
+  padding: 10px 8px; border-radius: var(--radius);
+  background: var(--bg-card); border: 1px solid var(--border);
+  text-align: center;
+}
+.lib-stat .num { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
+.lib-stat .lbl { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+
+.lib-search {
+  width: 100%; padding: 8px 12px;
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--bg-card); font: inherit; font-size: 12px; color: var(--text);
+  margin-bottom: 12px;
+  transition: all 180ms var(--ease);
+}
+.lib-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91,91,214,0.12); background: var(--bg); }
+.lib-search::placeholder { color: var(--text-dim); }
+
+.lib-h {
+  font-size: 11px; font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-dim);
+  margin: 16px 0 10px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.lib-h .count { color: var(--text-dim); font-weight: 500; }
+
+.color-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px;
+}
+.color-cell {
+  border-radius: var(--radius-sm); overflow: hidden;
+  border: 1px solid var(--border); background: var(--bg);
+  cursor: pointer; text-align: left;
+  transition: all 180ms var(--ease);
+}
+.color-cell:hover { transform: translateY(-2px); box-shadow: var(--shadow-2); }
+.color-cell .swatch-big { height: 44px; }
+.color-cell .meta { padding: 6px 8px; }
+.color-cell .name {
+  font-size: 10px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.color-cell .hex { font-size: 9px; font-family: ui-monospace, monospace; color: var(--text-dim); margin-top: 1px; }
+
+.type-list { display: flex; flex-direction: column; gap: 6px; }
+.type-item {
+  padding: 10px 12px; border-radius: var(--radius);
+  background: var(--bg-card); border: 1px solid var(--border);
+  cursor: default;
+}
+.type-item .sample {
+  color: var(--text); margin-bottom: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.type-item .row {
+  display: flex; justify-content: space-between; gap: 8px;
+  font-size: 10px; color: var(--text-dim); font-family: ui-monospace, monospace;
+}
+.type-item .name { color: var(--text-muted); font-weight: 500; font-family: -apple-system, system-ui, sans-serif; }
+
+.spacing-ladder { display: flex; flex-direction: column; gap: 6px; }
+.spacing-step {
+  display: flex; align-items: center; gap: 12px;
+  padding: 6px 12px; border-radius: var(--radius-sm); background: var(--bg-card);
+}
+.spacing-step .num { width: 36px; font-size: 11px; font-family: ui-monospace, monospace; color: var(--text); font-weight: 600; flex-shrink: 0; }
+.spacing-step .bar { height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+.comp-list { display: flex; flex-direction: column; gap: 4px; }
+.comp-item {
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  background: var(--bg-card); border: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px;
+}
+.comp-item .icon { width: 22px; height: 22px; border-radius: 5px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: white; display: grid; place-items: center; font-size: 11px; flex-shrink: 0; }
+.comp-item .name { font-size: 12px; color: var(--text); font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ========== CHAT PANE ========== */
+.chat-pane.active {
+  display: flex; flex-direction: column;
+  min-height: calc(100% - 0px);
+}
+.chat-messages {
+  flex: 1;
+  padding: 0 0 8px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.chat-msg { max-width: 92%; }
+.chat-msg .bubble {
+  padding: 10px 12px; border-radius: 14px;
+  font-size: 13px; line-height: 1.5;
+  word-break: break-word;
+}
+.chat-msg .meta { font-size: 10px; color: var(--text-dim); margin-top: 4px; padding: 0 4px; }
+.chat-msg.user { align-self: flex-end; }
+.chat-msg.user .bubble {
+  background: var(--text); color: var(--bg);
+  border-bottom-right-radius: 4px;
+}
+.chat-msg.user .meta { text-align: right; }
+.chat-msg.assistant { align-self: flex-start; }
+.chat-msg.assistant .bubble {
+  background: var(--bg-card); color: var(--text); border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+.chat-msg .bubble code { background: rgba(0,0,0,0.06); }
+.chat-msg.user .bubble code { background: rgba(255,255,255,0.16); color: white; }
+.chat-msg .bubble p { margin: 0; }
+.chat-msg .bubble p + p { margin-top: 8px; }
+.chat-msg .bubble ul, .chat-msg .bubble ol { margin: 6px 0; padding-left: 20px; }
+.chat-msg .bubble li { margin: 2px 0; }
+.chat-msg .bubble strong { font-weight: 600; }
+
+.chat-typing .bubble { padding: 12px 14px; }
+.chat-typing .dots { display: inline-flex; gap: 4px; }
+.chat-typing .dots span {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--text-dim);
+  animation: bounce 1.2s infinite;
+}
+.chat-typing .dots span:nth-child(2) { animation-delay: 0.15s; }
+.chat-typing .dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.3; } 30% { transform: translateY(-4px); opacity: 1; } }
+
+.chat-suggested {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding: 0 0 10px; align-self: stretch;
+}
+.suggest-chip {
+  padding: 6px 12px; border-radius: 100px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-size: 11px; color: var(--text); font-weight: 500;
+  transition: all 180ms var(--ease);
+}
+.suggest-chip:hover { background: var(--bg-elev); border-color: var(--accent); color: var(--accent); }
+
+.chat-input-wrap {
+  position: sticky; bottom: 0; padding-top: 8px;
+  background: linear-gradient(to bottom, transparent, var(--bg) 30%);
+}
+.chat-input {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 8px 8px 8px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-card); border: 1px solid var(--border);
+  transition: all 180ms var(--ease);
+}
+.chat-input:focus-within { border-color: var(--accent); background: var(--bg); box-shadow: 0 0 0 3px rgba(91,91,214,0.10); }
+.chat-input textarea {
+  flex: 1; resize: none; border: none; outline: none; background: transparent;
+  font: inherit; font-size: 13px; color: var(--text);
+  max-height: 100px; min-height: 22px; line-height: 1.4;
+  padding: 4px 0;
+}
+.chat-input textarea::placeholder { color: var(--text-dim); }
+.send-btn {
+  width: 30px; height: 30px; border-radius: 50%;
+  background: var(--text); color: var(--bg);
+  display: grid; place-items: center; flex-shrink: 0;
+  transition: all 180ms var(--ease);
+}
+.send-btn:hover:not(:disabled) { transform: scale(1.06); }
+.send-btn:disabled { background: var(--bg-elev); color: var(--text-dim); }
+
+/* ========== TOAST ========== */
+.toast {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  padding: 9px 16px; border-radius: 100px;
+  background: var(--text); color: var(--bg);
+  font-size: 12px; font-weight: 500;
+  box-shadow: var(--shadow-pop);
+  opacity: 0; pointer-events: none;
+  transition: opacity 220ms var(--ease), transform 220ms var(--ease);
+  z-index: 100;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
+
+/* personas */
+.personas {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+  margin-bottom: 16px;
+}
+.persona {
+  padding: 10px 8px; border-radius: var(--radius);
+  background: var(--bg-card); border: 1px solid var(--border);
+  text-align: center; transition: all 180ms var(--ease);
+}
+.persona .face { font-size: 18px; margin-bottom: 4px; }
+.persona .name { font-size: 11px; font-weight: 600; }
+.persona .desc { font-size: 9px; color: var(--text-dim); margin-top: 1px; }
+.persona.active {
+  background: linear-gradient(135deg, rgba(91,91,214,0.08), rgba(139,92,246,0.08));
+  border-color: var(--accent);
+}
+.persona:hover:not(.active) { background: var(--bg-elev); }
+
+/* shimmer */
+.shimmer { height: 14px; background: linear-gradient(90deg, var(--bg-card) 0%, var(--bg-elev) 50%, var(--bg-card) 100%); background-size: 200% 100%; border-radius: 6px; animation: shimmer 1.2s infinite; margin-bottom: 8px; }
+.shimmer.wide { height: 60px; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 </style>
 </head>
 <body>
-<div class="app">
 
-  <!-- HEADER -->
-  <div class="header">
-    <div class="header-row">
-      <div class="logo">
-        <div class="logo-mark">U</div>
-        <span>Uchi DS Sync</span>
-      </div>
-      <button class="analyze-btn" id="analyze-btn" disabled>Analyze</button>
+<!-- HEADER -->
+<div class="header">
+  <div class="header-row">
+    <div class="brand">
+      <div class="brand-mark">U</div>
+      <span>Uchi DS</span>
     </div>
-
-    <div class="selection-info" id="selection-info">
+    <div class="ds-pill" id="ds-pill" title="Источник дизайн-системы">
       <span class="dot"></span>
-      <span id="selection-text">Выдели фрейм или несколько</span>
+      <span class="name" id="ds-pill-name">Загрузка…</span>
+      <span class="meta" id="ds-pill-meta"></span>
     </div>
+  </div>
 
-    <div class="ds-status" id="ds-status">
-      <span class="dot-src"></span>
-      <span class="ds-meta" id="ds-meta">Загружаю дизайн-систему…</span>
-      <button class="refresh" id="ds-refresh" title="Перечитать DS из Figma UI Kit">↻</button>
-    </div>
+  <div class="selection" id="selection">
+    <div class="sel-icon"></div>
+    <div class="sel-text" id="sel-text">Выделите фрейм</div>
+    <button class="analyze-btn" id="analyze-btn" disabled>
+      <span>Analyze</span>
+      <span class="arrow">→</span>
+    </button>
+  </div>
+</div>
 
-    <div class="score-strip" id="score-strip">
-      <div class="score-pill" data-tab="colors">
-        <div class="count" id="cnt-colors">0</div>
-        <div class="label">Цвета</div>
-      </div>
-      <div class="score-pill" data-tab="spacing">
-        <div class="count" id="cnt-spacing">0</div>
-        <div class="label">Отступы</div>
-      </div>
-      <div class="score-pill" data-tab="typography">
-        <div class="count" id="cnt-typography">0</div>
-        <div class="label">Шрифты</div>
-      </div>
-      <div class="score-pill" data-tab="outdated">
-        <div class="count" id="cnt-outdated">0</div>
-        <div class="label">Обновл.</div>
+<!-- SEGMENTED CONTROL -->
+<div class="segmented" id="segmented">
+  <button class="seg active" data-tab="review">
+    Review <span class="pill-count" id="cnt-issues">0</span>
+  </button>
+  <button class="seg" data-tab="library">Library</button>
+  <button class="seg" data-tab="chat">Chat</button>
+</div>
+
+<!-- CONTENT -->
+<div class="scroll" id="scroll">
+
+  <!-- REVIEW PANE -->
+  <div class="pane active" id="pane-review">
+    <div id="review-content">
+      <div class="empty">
+        <div class="icon">✦</div>
+        <div class="title">Готов к работе</div>
+        <div class="hint">Выделите фрейм в Figma и нажмите Analyze — найду расхождения с DS и приведу примеры из библиотеки.</div>
       </div>
     </div>
   </div>
 
-  <!-- TABS -->
-  <div class="tabs" id="tabs">
-    <div class="tab active" data-tab="colors">Цвета <span class="badge empty" id="badge-colors">0</span></div>
-    <div class="tab" data-tab="spacing">Отступы <span class="badge empty" id="badge-spacing">0</span></div>
-    <div class="tab" data-tab="typography">Шрифты <span class="badge empty" id="badge-typography">0</span></div>
-    <div class="tab" data-tab="outdated">Обновления <span class="badge empty" id="badge-outdated">0</span></div>
-    <div class="tab" data-tab="components">Компон. <span class="badge empty" id="badge-components">0</span></div>
-    <div class="tab" data-tab="ux">UX-ревью</div>
+  <!-- LIBRARY PANE -->
+  <div class="pane" id="pane-library">
+    <div class="lib-stats">
+      <div class="lib-stat"><div class="num" id="lib-stat-c">—</div><div class="lbl">цветов</div></div>
+      <div class="lib-stat"><div class="num" id="lib-stat-t">—</div><div class="lbl">typo</div></div>
+      <div class="lib-stat"><div class="num" id="lib-stat-s">—</div><div class="lbl">spacing</div></div>
+      <div class="lib-stat"><div class="num" id="lib-stat-k">—</div><div class="lbl">компонентов</div></div>
+    </div>
+
+    <input type="search" class="lib-search" id="lib-search" placeholder="Поиск по токенам, типографике и компонентам…" />
+
+    <div class="lib-h"><span>Цвета</span><span class="count" id="lib-c-count"></span></div>
+    <div class="color-grid" id="lib-colors"></div>
+
+    <div class="lib-h"><span>Типографика</span><span class="count" id="lib-t-count"></span></div>
+    <div class="type-list" id="lib-typo"></div>
+
+    <div class="lib-h"><span>Spacing</span><span class="count" id="lib-s-count"></span></div>
+    <div class="spacing-ladder" id="lib-spacing"></div>
+
+    <div class="lib-h"><span>Компоненты</span><span class="count" id="lib-k-count"></span></div>
+    <div class="comp-list" id="lib-comp"></div>
   </div>
 
-  <!-- CONTENT -->
-  <div class="content" id="content">
-    <div class="pane active" id="pane-colors">
-      <div class="empty-state">
-        <div class="icon">🎨</div>
-        <div class="title">Готов к анализу</div>
-        <div class="hint">Выдели один или несколько фреймов в Figma и нажми «Analyze»</div>
+  <!-- CHAT PANE -->
+  <div class="pane chat-pane" id="pane-chat">
+    <div class="personas">
+      <button class="persona active" data-persona="designer">
+        <div class="face">🎨</div>
+        <div class="name">Дизайнер</div>
+        <div class="desc">UX-эксперт</div>
+      </button>
+      <button class="persona" data-persona="child">
+        <div class="face">👶</div>
+        <div class="name">Ребёнок</div>
+        <div class="desc">9 лет</div>
+      </button>
+      <button class="persona" data-persona="parent">
+        <div class="face">👤</div>
+        <div class="name">Родитель</div>
+        <div class="desc">38 лет</div>
+      </button>
+    </div>
+
+    <div class="chat-messages" id="chat-messages">
+      <div class="empty" style="padding: 32px 12px;">
+        <div class="icon">💬</div>
+        <div class="title">GPT-5.5 готов помочь</div>
+        <div class="hint">Сначала запустите Analyze, потом задавайте вопросы про макет, токены и компоненты.</div>
       </div>
     </div>
-    <div class="pane" id="pane-spacing"><div class="empty-state"><div class="icon">📏</div><div class="title">Анализ не запущен</div></div></div>
-    <div class="pane" id="pane-typography"><div class="empty-state"><div class="icon">🔤</div><div class="title">Анализ не запущен</div></div></div>
-    <div class="pane" id="pane-outdated"><div class="empty-state"><div class="icon">🔄</div><div class="title">Анализ не запущен</div><div class="hint">Здесь покажем компоненты с доступными обновлениями</div></div></div>
-    <div class="pane" id="pane-components"><div class="empty-state"><div class="icon">🧩</div><div class="title">Анализ не запущен</div></div></div>
 
-    <div class="pane" id="pane-ux">
-      <div class="persona-row">
-        <div class="persona-btn active" data-persona="designer">
-          <div class="emoji">🎨</div>
-          <div class="name">Дизайнер</div>
-          <div class="desc">UX-эксперт</div>
-        </div>
-        <div class="persona-btn" data-persona="child">
-          <div class="emoji">👶</div>
-          <div class="name">Ребёнок</div>
-          <div class="desc">9 лет, 3 класс</div>
-        </div>
-        <div class="persona-btn" data-persona="parent">
-          <div class="emoji">👤</div>
-          <div class="name">Родитель</div>
-          <div class="desc">38 лет, мама</div>
-        </div>
-      </div>
-      <div id="ux-content">
-        <div class="empty-state">
-          <div class="icon">✨</div>
-          <div class="title">UX-ревью от GPT-5.5</div>
-          <div class="hint">Выбери персону и запусти Analyze<br>Можно перезапускать для разных персон</div>
-        </div>
+    <div class="chat-suggested" id="chat-suggested" style="display:none">
+      <button class="suggest-chip" data-q="Что критично исправить в первую очередь?">Что критично?</button>
+      <button class="suggest-chip" data-q="Где макет нарушает дизайн-систему?">Нарушения DS</button>
+      <button class="suggest-chip" data-q="Как бы ты улучшил иерархию на этом экране?">Иерархия</button>
+      <button class="suggest-chip" data-q="Подходит ли это детям 6-14 лет?">Для детей?</button>
+    </div>
+
+    <div class="chat-input-wrap">
+      <div class="chat-input">
+        <textarea id="chat-text" rows="1" placeholder="Спросите ассистента…"></textarea>
+        <button class="send-btn" id="chat-send" disabled title="Отправить">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        </button>
       </div>
     </div>
   </div>
 
-  <!-- FOOTER -->
-  <div class="footer">
-    <button class="fix-all-btn" id="fix-all-btn" disabled>Fix all</button>
-  </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
-  const VERCEL_ENDPOINT = 'https://figma-plugin-uchi.vercel.app/api/ux-review';
+const VERCEL_BASE     = 'https://figma-plugin-uchi.vercel.app';
+const REVIEW_ENDPOINT = VERCEL_BASE + '/api/ux-review';
+const CHAT_ENDPOINT   = VERCEL_BASE + '/api/ux-chat';
 
-  let state = {
-    activeTab: 'colors',
-    issues: { colors: [], spacing: [], typography: [], components: [], outdated: [] },
-    uxReview: null,
-    fixed: new Set(),
-    perspective: 'designer',
-    lastPayload: null,
-    selectionCount: 0
-  };
+const $ = function (id) { return document.getElementById(id); };
+const $$ = function (sel) { return document.querySelectorAll(sel); };
 
-  const $ = function (id) { return document.getElementById(id); };
-  const $$ = function (sel) { return document.querySelectorAll(sel); };
+const state = {
+  tab: 'review',
+  perspective: 'designer',
+  selectionCount: 0,
+  selectionNames: [],
+  ds: null,
+  issues: { colors: [], spacing: [], typography: [], outdated: [], components: [] },
+  fixed: new Set(),
+  review: null,
+  reviewContext: null,           // { layoutJson, issues, selectionNames, screenshotBase64 }
+  chat: [],                       // { role: 'user'|'assistant', content }
+  chatBusy: false,
+  reviewRequested: false
+};
 
-  function showToast(text) {
-    const t = $('toast');
-    t.textContent = text;
-    t.classList.add('show');
-    setTimeout(function () { t.classList.remove('show'); }, 1500);
-  }
+function send(msg) { parent.postMessage({ pluginMessage: msg }, '*'); }
+function esc(s) { if (s == null) return ''; return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+function toast(text) { const t = $('toast'); t.textContent = text; t.classList.add('show'); clearTimeout(window._tt); window._tt = setTimeout(() => t.classList.remove('show'), 1800); }
 
-  function send(msg) {
-    parent.postMessage({ pluginMessage: msg }, '*');
-  }
-
-  // TABS
-  $$('.tab').forEach(function (tab) {
-    tab.addEventListener('click', function () { switchTab(tab.dataset.tab); });
+// Мини markdown → html (bold, code, list)
+function md(text) {
+  if (!text) return '';
+  let h = esc(text);
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  h = h.replace(/\*\*([^\*]+)\*\*/g, '<strong>$1</strong>');
+  // bullet lists
+  h = h.replace(/(^|\n)((?:- [^\n]+\n?)+)/g, function(m, p, b) {
+    const items = b.trim().split(/\n/).map(s => s.replace(/^- /, '')).map(s => '<li>' + s + '</li>').join('');
+    return p + '<ul>' + items + '</ul>';
   });
-  $$('.score-pill').forEach(function (pill) {
-    pill.addEventListener('click', function () { switchTab(pill.dataset.tab); });
+  // numbered lists
+  h = h.replace(/(^|\n)((?:\d+\. [^\n]+\n?)+)/g, function(m, p, b) {
+    const items = b.trim().split(/\n/).map(s => s.replace(/^\d+\. /, '')).map(s => '<li>' + s + '</li>').join('');
+    return p + '<ol>' + items + '</ol>';
   });
+  // paragraphs
+  const blocks = h.split(/\n\n+/).map(b => b.match(/^<(ul|ol|h\d|p)/) ? b : '<p>' + b.replace(/\n/g, '<br/>') + '</p>');
+  return blocks.join('');
+}
 
-  function switchTab(name) {
-    state.activeTab = name;
-    $$('.tab').forEach(function (t) { t.classList.toggle('active', t.dataset.tab === name); });
-    $$('.score-pill').forEach(function (p) { p.classList.toggle('active', p.dataset.tab === name); });
-    $$('.pane').forEach(function (p) { p.classList.toggle('active', p.id === 'pane-' + name); });
+// ============ TABS ============
+$$('.seg').forEach(function (s) { s.addEventListener('click', function () { switchTab(s.dataset.tab); }); });
+function switchTab(name) {
+  state.tab = name;
+  $$('.seg').forEach(function (s) { s.classList.toggle('active', s.dataset.tab === name); });
+  $$('.pane').forEach(function (p) { p.classList.toggle('active', p.id === 'pane-' + name); });
+  if (name === 'library' && state.ds == null) send({ type: 'request-library' });
+}
 
-    const btn = $('fix-all-btn');
-    if (name === 'ux' || name === 'components') {
-      btn.style.display = 'none';
-    } else {
-      btn.style.display = '';
-      const count = state.issues[name] ? state.issues[name].length : 0;
-      const unfixed = state.issues[name] ? state.issues[name].filter(function (i) {
-        return !state.fixed.has(i.id);
-      }).length : 0;
-      btn.disabled = unfixed === 0;
-      const labels = { colors: 'цвета', spacing: 'отступы', typography: 'шрифты', outdated: 'обновления' };
-      btn.textContent = unfixed > 0 ? 'Fix ' + labels[name] + ' (' + unfixed + ')' : 'Nothing to fix';
+// ============ PERSONAS ============
+$$('.persona').forEach(function (b) {
+  b.addEventListener('click', function () {
+    state.perspective = b.dataset.persona;
+    $$('.persona').forEach(function (x) { x.classList.toggle('active', x === b); });
+    if (state.reviewContext) {
+      // если разговор уже шёл — отправляем системный сигнал в чат
+      pushAssistant('Переключаюсь на оптику: ' + b.querySelector('.name').textContent + '. Задайте вопрос или попросите перезапустить анализ.');
     }
-  }
-
-  // PERSONA
-  $$('.persona-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      state.perspective = btn.dataset.persona;
-      $$('.persona-btn').forEach(function (b) { b.classList.toggle('active', b === btn); });
-
-      // если у нас уже есть результат — запрашиваем заново с новой персоной
-      if (state.lastPayload) {
-        showUxLoading();
-        const newPayload = Object.assign({}, state.lastPayload, { perspective: state.perspective });
-        requestUxReview(newPayload);
-      }
-    });
   });
+});
 
-  // ANALYZE
-  $('analyze-btn').addEventListener('click', function () {
-    if (state.selectionCount === 0) return;
-    send({ type: 'analyze' });
-    $('analyze-btn').disabled = true;
-    $('analyze-btn').textContent = 'Analyzing...';
-  });
+// ============ ANALYZE ============
+$('analyze-btn').addEventListener('click', function () {
+  if (state.selectionCount === 0) return;
+  state.reviewRequested = true;
+  send({ type: 'analyze' });
+  $('analyze-btn').disabled = true;
+  $('analyze-btn').firstElementChild.textContent = 'Анализирую…';
+});
 
-  // REFRESH DS
-  $('ds-refresh').addEventListener('click', function () {
-    $('ds-refresh').disabled = true;
-    $('ds-meta').textContent = 'Обновляю DS из Figma UI Kit…';
+// ============ DS PILL CLICK → open file ============
+$('ds-pill').addEventListener('click', function () {
+  if (state.ds && state.ds.source && state.ds.source.figmaUrl) {
+    window.open(state.ds.source.figmaUrl, '_blank');
+  } else {
     send({ type: 'refresh-ds' });
-  });
+    toast('Обновляю DS из Figma…');
+  }
+});
 
-  // RENDER
-  function renderIssues() {
-    renderColors();
-    renderSpacing();
-    renderTypography();
-    renderOutdated();
-    renderComponents();
-    updateBadges();
-    updateFixAllButton();
-    $('score-strip').classList.add('show');
+// ============ MESSAGES FROM PLUGIN ============
+window.onmessage = function (event) {
+  const msg = event.data.pluginMessage;
+  if (!msg) return;
+
+  if (msg.type === 'selection-changed') {
+    state.selectionCount = msg.count;
+    state.selectionNames = msg.names || [];
+    updateSelection();
   }
 
-  function updateBadges() {
-    const keys = ['colors', 'spacing', 'typography', 'outdated', 'components'];
-    for (const key of keys) {
-      const total = state.issues[key] ? state.issues[key].length : 0;
-      const remaining = state.issues[key] ? state.issues[key].filter(function (i) {
-        return !state.fixed.has(i.id);
-      }).length : 0;
-
-      const cntEl = $('cnt-' + key);
-      if (cntEl) cntEl.textContent = remaining;
-      const badge = $('badge-' + key);
-      if (badge) {
-        badge.textContent = remaining;
-        badge.classList.toggle('empty', remaining === 0);
-      }
-
-      const pill = document.querySelector('.score-pill[data-tab="' + key + '"]');
-      if (pill) {
-        pill.classList.remove('ok', 'warn', 'error');
-        if (remaining === 0 && total > 0) pill.classList.add('ok');
-        else if (remaining > 0 && remaining <= 3) pill.classList.add('warn');
-        else if (remaining > 3) pill.classList.add('error');
-      }
-    }
+  if (msg.type === 'ds-status') {
+    renderDSPill(msg);
   }
 
-  function updateFixAllButton() { switchTab(state.activeTab); }
-
-  function renderColors() {
-    const pane = $('pane-colors');
-    const list = state.issues.colors;
-    if (list.length === 0) {
-      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Все цвета из DS</div></div>';
-      return;
-    }
-    pane.innerHTML = list.map(function (issue) {
-      const done = state.fixed.has(issue.id);
-      return '<div class="issue-card"><div class="issue-row">' +
-        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
-        '<div class="issue-name">' + escapeHtml(issue.nodeName) + ' · ' + issue.property + '</div>' +
-        '<div class="issue-change">' +
-        '<span class="issue-from"><span class="swatch" style="background:' + issue.current + '"></span><span class="mono">' + issue.current + '</span></span>' +
-        '<span class="issue-arrow">→</span>' +
-        '<span class="issue-to"><span class="swatch" style="background:' + issue.suggested + '"></span><span class="mono">' + issue.suggestedToken + '</span></span>' +
-        '</div></div>' +
-        '<button class="fix-btn ' + (done ? 'done' : '') + '" data-fix="color" data-id="' + issue.id + '" data-node="' + issue.nodeId + '" data-property="' + issue.property + '" data-suggested="' + issue.suggested + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓' : 'Fix') + '</button>' +
-        '</div></div>';
-    }).join('');
-    bindFixButtons(); bindFocusElements();
+  if (msg.type === 'ds-library') {
+    state.ds = msg.library;
+    renderLibrary();
   }
 
-  function renderSpacing() {
-    const pane = $('pane-spacing');
-    const list = state.issues.spacing;
-    if (list.length === 0) {
-      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Все отступы по шкале</div></div>';
-      return;
-    }
-    pane.innerHTML = list.map(function (issue) {
-      const done = state.fixed.has(issue.id);
-      return '<div class="issue-card"><div class="issue-row">' +
-        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
-        '<div class="issue-name">' + escapeHtml(issue.nodeName) + ' · ' + issue.property + '</div>' +
-        '<div class="issue-change">' +
-        '<span class="issue-from mono">' + issue.current + 'px</span>' +
-        '<span class="issue-arrow">→</span>' +
-        '<span class="issue-to mono">' + issue.suggested + 'px</span>' +
-        '</div></div>' +
-        '<button class="fix-btn ' + (done ? 'done' : '') + '" data-fix="spacing" data-id="' + issue.id + '" data-node="' + issue.nodeId + '" data-property="' + issue.property + '" data-suggested="' + issue.suggested + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓' : 'Fix') + '</button>' +
-        '</div></div>';
-    }).join('');
-    bindFixButtons(); bindFocusElements();
+  if (msg.type === 'analyze-start') {
+    renderReviewLoading();
+    switchTab('review');
   }
 
-  function renderTypography() {
-    const pane = $('pane-typography');
-    const list = state.issues.typography;
-    if (list.length === 0) {
-      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Вся типографика из DS</div></div>';
-      return;
-    }
-    pane.innerHTML = list.map(function (issue) {
-      const done = state.fixed.has(issue.id);
-      return '<div class="issue-card"><div class="issue-row">' +
-        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
-        '<div class="issue-name">' + escapeHtml(issue.nodeName) + '</div>' +
-        '<div class="issue-change">' +
-        '<span class="issue-from mono">' + issue.current + '</span>' +
-        '<span class="issue-arrow">→</span>' +
-        '<span class="issue-to mono">' + issue.suggestedToken + '</span>' +
-        '</div></div>' +
-        '<button class="fix-btn ' + (done ? 'done' : '') + '" data-fix="typography" data-id="' + issue.id + '" data-node="' + issue.nodeId + '" data-size="' + issue.targetSize + '" data-lh="' + issue.targetLineHeight + '" data-weight="' + issue.targetWeight + '" ' + (done ? 'disabled' : '') + '>' + (done ? '✓' : 'Fix') + '</button>' +
-        '</div></div>';
-    }).join('');
-    bindFixButtons(); bindFocusElements();
+  if (msg.type === 'analyze-result') {
+    state.issues = msg.issues;
+    state.fixed = new Set();
+    renderReview();
+    $('analyze-btn').disabled = state.selectionCount === 0;
+    $('analyze-btn').firstElementChild.textContent = 'Re-analyze';
+    updateIssueCount();
   }
 
-  function renderOutdated() {
-    const pane = $('pane-outdated');
-    const list = state.issues.outdated;
-    if (list.length === 0) {
-      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Все компоненты актуальны</div><div class="hint">Не нашли устаревших и detached</div></div>';
-      return;
-    }
-    pane.innerHTML = list.map(function (issue) {
-      const done = state.fixed.has(issue.id);
-      const canUpdate = issue.updatable === true;
-      const btnLabel = done ? '✓' : (canUpdate ? 'Update' : 'Goto');
-      const btnAttrs = canUpdate
-        ? 'data-update="' + issue.id + '" data-node="' + issue.nodeId + '" data-key="' + (issue.componentKey || '') + '"'
-        : 'data-focus-btn="' + issue.nodeId + '"';
-      return '<div class="issue-card"><div class="issue-row">' +
-        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
-        '<div class="issue-name">' + escapeHtml(issue.nodeName) + ' · ' + issue.type + '</div>' +
-        '<div class="issue-change"><span class="issue-from">' + escapeHtml(issue.message) + '</span></div>' +
-        '</div>' +
-        '<button class="fix-btn ' + (done ? 'done' : '') + '" ' + btnAttrs + ' ' + (done ? 'disabled' : '') + '>' + btnLabel + '</button>' +
-        '</div></div>';
-    }).join('');
-
-    bindFocusElements();
-    $$('[data-focus-btn]').forEach(function (b) {
-      b.addEventListener('click', function () { send({ type: 'focus-node', nodeId: b.dataset.focusBtn }); });
-    });
-    $$('[data-update]').forEach(function (b) {
-      b.addEventListener('click', function () {
-        send({ type: 'update-outdated', id: b.dataset.update, nodeId: b.dataset.node, componentKey: b.dataset.key });
-      });
-    });
+  if (msg.type === 'request-ux-review') {
+    state.reviewContext = msg.context;
+    requestReview(Object.assign({}, msg.payload, { perspective: state.perspective }));
+    $('chat-suggested').style.display = 'flex';
   }
 
-  function renderComponents() {
-    const pane = $('pane-components');
-    const list = state.issues.components;
-    if (list.length === 0) {
-      pane.innerHTML = '<div class="empty-state"><div class="icon">✓</div><div class="title">Компоненты в порядке</div></div>';
-      return;
-    }
-    pane.innerHTML = list.map(function (issue) {
-      return '<div class="issue-card"><div class="issue-row">' +
-        '<div class="issue-left" data-focus="' + issue.nodeId + '">' +
-        '<div class="issue-name">' + escapeHtml(issue.nodeName) + '</div>' +
-        '<div class="issue-change"><span class="issue-from">' + escapeHtml(issue.message) + '</span></div>' +
-        '</div>' +
-        '<button class="fix-btn" data-focus-btn="' + issue.nodeId + '">Goto</button>' +
-        '</div></div>';
-    }).join('');
-    bindFocusElements();
-    $$('[data-focus-btn]').forEach(function (b) {
-      b.addEventListener('click', function () { send({ type: 'focus-node', nodeId: b.dataset.focusBtn }); });
+  if (msg.type === 'fix-result') {
+    if (msg.ok) { state.fixed.add(msg.id); toast('Применено'); renderReview(); }
+    else toast('Не удалось применить');
+  }
+
+  if (msg.type === 'fix-all-result') {
+    let ok = 0;
+    for (const r of msg.results) if (r.ok) { state.fixed.add(r.id); ok++; }
+    toast('Применено: ' + ok + ' из ' + msg.results.length);
+    renderReview();
+  }
+
+  if (msg.type === 'error') {
+    toast(msg.message);
+    $('analyze-btn').disabled = state.selectionCount === 0;
+    $('analyze-btn').firstElementChild.textContent = 'Analyze';
+  }
+};
+
+// ============ DS PILL ============
+function renderDSPill(msg) {
+  const pill = $('ds-pill');
+  const name = $('ds-pill-name');
+  const meta = $('ds-pill-meta');
+  pill.classList.remove('ok', 'warn', 'bad');
+  const src = msg.source || {};
+  if (src.kind === 'figma') {
+    pill.classList.add('ok');
+    name.textContent = src.fileName || 'UI Kit';
+    const counts = [];
+    if (src.colors) counts.push(src.colors + ' цв');
+    if (src.typography) counts.push(src.typography + ' typo');
+    if (src.components) counts.push(src.components + ' комп');
+    meta.textContent = '· ' + counts.join(' · ');
+  } else if (msg.loaded && msg.localAttached) {
+    pill.classList.add('ok');
+    name.textContent = 'Local Variables';
+    meta.textContent = '· текущий файл';
+  } else {
+    pill.classList.add('warn');
+    name.textContent = 'Fallback DS';
+    meta.textContent = msg.reason ? '· ' + (msg.reason.length > 30 ? msg.reason.substring(0, 30) + '…' : msg.reason) : '';
+  }
+}
+
+// ============ SELECTION ============
+function updateSelection() {
+  const sel = $('selection');
+  const txt = $('sel-text');
+  const btn = $('analyze-btn');
+  if (state.selectionCount === 0) {
+    sel.classList.remove('ready');
+    txt.innerHTML = 'Выделите фрейм';
+    btn.disabled = true;
+  } else if (state.selectionCount === 1) {
+    sel.classList.add('ready');
+    txt.innerHTML = '<strong>' + esc(state.selectionNames[0]) + '</strong>';
+    btn.disabled = false;
+  } else {
+    sel.classList.add('ready');
+    txt.innerHTML = '<strong>' + state.selectionCount + ' фреймов</strong>';
+    btn.disabled = false;
+  }
+}
+
+// ============ REVIEW PANE ============
+function updateIssueCount() {
+  const total = (state.issues.colors.length + state.issues.spacing.length + state.issues.typography.length + state.issues.outdated.length + state.issues.components.length);
+  $('cnt-issues').textContent = total;
+}
+
+function renderReviewLoading() {
+  $('review-content').innerHTML =
+    '<div class="shimmer wide"></div>' +
+    '<div class="shimmer" style="width: 60%"></div>' +
+    '<div class="shimmer"></div>' +
+    '<div class="shimmer" style="width: 80%"></div>';
+}
+
+function renderReview() {
+  const c = $('review-content');
+  const i = state.issues;
+  const total = i.colors.length + i.spacing.length + i.typography.length + i.outdated.length + i.components.length;
+
+  let html = '';
+
+  // GPT review card
+  if (state.review) {
+    html += renderScoreCard(state.review);
+  } else {
+    html += '<div class="shimmer wide"></div><div class="shimmer" style="width: 60%; margin-bottom: 18px;"></div>';
+  }
+
+  if (total === 0) {
+    html += '<div class="empty" style="padding: 30px 16px;"><div class="icon">✓</div><div class="title">Чисто</div><div class="hint">Все цвета, типографика, отступы и компоненты соответствуют дизайн-системе.</div></div>';
+  }
+
+  // colors grouped
+  if (i.colors.length > 0) {
+    html += sectionHeader('Цвета', i.colors.length, 'colors');
+    html += i.colors.map(renderColorCard).join('');
+  }
+
+  // spacing grouped by node
+  if (i.spacing.length > 0) {
+    const grouped = groupBy(i.spacing, 'nodeId');
+    html += sectionHeader('Отступы', i.spacing.length, 'spacing');
+    Object.values(grouped).forEach(function (g) {
+      html += renderSpacingGroup(g);
     });
   }
 
-  function bindFocusElements() {
-    $$('[data-focus]').forEach(function (el) {
-      el.addEventListener('click', function () { send({ type: 'focus-node', nodeId: el.dataset.focus }); });
-    });
+  // typography
+  if (i.typography.length > 0) {
+    html += sectionHeader('Типографика', i.typography.length, 'typography');
+    html += i.typography.map(renderTypoCard).join('');
   }
 
-  function bindFixButtons() {
-    $$('button[data-fix]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        const kind = btn.dataset.fix;
-        const id = btn.dataset.id;
-        if (kind === 'color') {
-          send({ type: 'fix-color', id: id, nodeId: btn.dataset.node, property: btn.dataset.property, suggested: btn.dataset.suggested });
-        } else if (kind === 'spacing') {
-          send({ type: 'fix-spacing', id: id, nodeId: btn.dataset.node, property: btn.dataset.property, suggested: parseFloat(btn.dataset.suggested) });
-        } else if (kind === 'typography') {
-          send({ type: 'fix-typography', id: id, nodeId: btn.dataset.node, targetSize: parseFloat(btn.dataset.size), targetLineHeight: parseFloat(btn.dataset.lh), targetWeight: parseInt(btn.dataset.weight) });
-        }
-      });
-    });
+  // outdated
+  if (i.outdated.length > 0) {
+    html += sectionHeader('Обновления', i.outdated.length, 'outdated');
+    html += i.outdated.map(renderOutdatedCard).join('');
   }
 
-  $('fix-all-btn').addEventListener('click', function () {
-    const tab = state.activeTab;
-    const list = state.issues[tab] || [];
-    const unfixed = list.filter(function (i) { return !state.fixed.has(i.id); });
-    if (unfixed.length === 0) return;
-
-    const fixes = unfixed.map(function (issue) {
-      if (tab === 'colors') return { category: 'color', id: issue.id, nodeId: issue.nodeId, property: issue.property, suggested: issue.suggested };
-      if (tab === 'spacing') return { category: 'spacing', id: issue.id, nodeId: issue.nodeId, property: issue.property, suggested: issue.suggested };
-      if (tab === 'typography') return { category: 'typography', id: issue.id, nodeId: issue.nodeId, targetSize: issue.targetSize, targetLineHeight: issue.targetLineHeight, targetWeight: issue.targetWeight };
-      if (tab === 'outdated' && issue.updatable) return { category: 'outdated', id: issue.id, nodeId: issue.nodeId, componentKey: issue.componentKey };
-      return null;
-    }).filter(Boolean);
-
-    send({ type: 'fix-all', fixes: fixes });
-  });
-
-  // UX REVIEW
-  function showUxLoading() {
-    $('ux-content').innerHTML =
-      '<div style="text-align:center; padding:8px 0 12px; font-size:11px; color:var(--muted);">' +
-      'GPT-5.5 анализирует макет (10–25 сек)...</div>' +
-      '<div class="shimmer shimmer-block"></div>' +
-      '<div class="shimmer shimmer-block"></div>' +
-      '<div class="shimmer shimmer-block"></div>';
+  // foreign / unknown components
+  if (i.components.length > 0) {
+    html += sectionHeader('Компоненты не из DS', i.components.length, null);
+    html += i.components.map(renderForeignCard).join('');
   }
 
-  async function requestUxReview(payload) {
-    try {
-      const res = await fetch(VERCEL_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const err = await res.text();
-        renderUxError('Сервер вернул ошибку: ' + res.status, err);
-        return;
-      }
-      const data = await res.json();
-      state.uxReview = data;
-      renderUxReview(data);
-    } catch (e) {
-      renderUxError('Не удалось связаться с сервером', e.message);
-    }
-  }
+  c.innerHTML = html;
+  attachReviewHandlers();
+}
 
-  function renderUxError(title, detail) {
-    $('ux-content').innerHTML =
-      '<div class="empty-state">' +
-      '<div class="icon">⚠️</div>' +
-      '<div class="title">' + escapeHtml(title) + '</div>' +
-      '<div class="hint" style="margin-top:8px; text-align:left; font-size:10px; padding: 8px; background: var(--bg-card); border-radius: 6px;">' + escapeHtml(detail || '') + '</div>' +
-      '</div>';
-  }
+function sectionHeader(title, count, fixCategory) {
+  const fixId = fixCategory ? 'fixall-' + fixCategory : null;
+  return '<div class="section-h"><span>' + esc(title) + ' <span style="color: var(--text-dim); margin-left: 4px;">' + count + '</span></span>' +
+         (fixId ? '<button class="fix-all" id="' + fixId + '" data-cat="' + fixCategory + '">Fix all</button>' : '') +
+         '</div>';
+}
 
-  function renderUxReview(data) {
-    const recs = data.recommendations || [];
-    const persp = data.perspective || state.perspective;
-    const perspLabels = {
-      designer: '🎨 Глазами дизайнера',
-      child: '👶 Глазами ребёнка (9 лет)',
-      parent: '👤 Глазами родителя (38 лет)'
-    };
+function groupBy(arr, key) {
+  const out = {};
+  for (const x of arr) { if (!out[x[key]]) out[x[key]] = []; out[x[key]].push(x); }
+  return out;
+}
 
-    let html =
-      '<div class="ux-summary">' +
-      '<div class="perspective-label">' + (perspLabels[persp] || persp) + '</div>' +
-      '<div class="ux-score">' +
-      '<span class="ux-score-value">' + data.overall_score + '</span>' +
-      '<span class="ux-score-max">/ 100</span>' +
-      '</div>' +
-      '<div class="ux-summary-text">' + escapeHtml(data.summary || '') + '</div>' +
-      '</div>';
+function renderScoreCard(r) {
+  const score = r.overall_score || 0;
+  const tagClass = score >= 80 ? 'good' : score >= 60 ? 'ok' : 'bad';
+  const tag = score >= 80 ? 'GOOD' : score >= 60 ? 'OK' : 'NEEDS WORK';
+  const perspLabels = { designer: '🎨 Дизайнер', child: '👶 Ребёнок 9 лет', parent: '👤 Родитель' };
+  const persp = r.perspective || state.perspective;
 
-    if (recs.length === 0) {
-      html += '<div class="empty-state"><div class="icon">✨</div><div class="title">Замечаний нет</div></div>';
-    } else {
-      html += recs.map(function (rec) {
-        return '<div class="ux-rec ' + rec.severity + '">' +
-          '<div class="ux-rec-head">' +
-          '<span class="ux-rec-cat">' + (rec.category || '') + '</span>' +
-          '<span class="ux-rec-title">' + escapeHtml(rec.title) + '</span>' +
-          '</div>' +
-          '<div class="ux-rec-desc">' + escapeHtml(rec.description) + '</div>' +
-          '<div class="ux-rec-suggestion">' + escapeHtml(rec.suggestion) + '</div>' +
-          (rec.target_layer ? '<div class="ux-rec-target">📍 ' + escapeHtml(rec.target_layer) + '</div>' : '') +
+  let recs = '';
+  if (r.recommendations && r.recommendations.length) {
+    recs = '<div style="margin-top: 14px; display: flex; flex-direction: column; gap: 8px;">' +
+      r.recommendations.slice(0, 5).map(function (rc) {
+        const sevColor = rc.severity === 'critical' ? 'var(--crit)' : rc.severity === 'warning' ? 'var(--warn)' : 'var(--text-dim)';
+        return '<div style="padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-left: 3px solid ' + sevColor + '; border-radius: var(--radius-sm);">' +
+          '<div style="font-size: 12px; font-weight: 600; margin-bottom: 4px;">' + esc(rc.title || '') + '</div>' +
+          '<div style="font-size: 11px; color: var(--text-muted); line-height: 1.45;">' + esc(rc.description || '') + '</div>' +
+          (rc.suggestion ? '<div style="font-size: 11px; color: var(--text); margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border);"><strong>Что сделать:</strong> ' + esc(rc.suggestion) + '</div>' : '') +
+          (rc.target_layer ? '<div style="font-size: 10px; color: var(--text-dim); margin-top: 6px; font-family: ui-monospace, monospace;">📍 ' + esc(rc.target_layer) + '</div>' : '') +
           '</div>';
-      }).join('');
-    }
-
-    $('ux-content').innerHTML = html;
+      }).join('') + '</div>';
   }
 
-  // SELECTION
-  function updateSelectionInfo(count, names) {
-    state.selectionCount = count;
-    const info = $('selection-info');
-    const text = $('selection-text');
-    const btn = $('analyze-btn');
+  return '<div class="score-card">' +
+    '<div class="score-persona">' + perspLabels[persp] + '</div>' +
+    '<div class="score-row">' +
+      '<span class="score-num">' + score + '</span>' +
+      '<span class="score-max">/ 100</span>' +
+      '<span class="score-tag ' + tagClass + '">' + tag + '</span>' +
+    '</div>' +
+    '<div class="score-summary">' + esc(r.summary || '') + '</div>' +
+    recs +
+  '</div>';
+}
 
-    if (count === 0) {
-      info.classList.remove('ready');
-      text.textContent = 'Выдели фрейм или несколько';
-      btn.disabled = true;
-    } else if (count === 1) {
-      info.classList.add('ready');
-      text.textContent = 'Готов: ' + names[0];
-      btn.disabled = false;
-    } else {
-      info.classList.add('ready');
-      text.textContent = 'Готов: ' + count + ' фрейма';
-      btn.disabled = false;
-    }
+function renderColorCard(c) {
+  if (state.fixed.has(c.id)) return '';
+  const conf = c.confidence || 'medium';
+  const altsHtml = (c.candidates && c.candidates.length > 1) ?
+    '<div class="alt-candidates"><span class="label">альтернативы:</span>' +
+    c.candidates.slice(1).map(function (alt) {
+      return '<button class="alt-chip" data-alt-hex="' + alt.hex + '" data-id="' + c.id + '" data-node="' + c.nodeId + '" data-prop="' + c.property + '">' +
+        '<span class="mini-swatch" style="background:' + alt.hex + '"></span>' + esc(alt.name) + '</button>';
+    }).join('') + '</div>' : '';
+
+  return '<div class="card" data-card-id="' + c.id + '">' +
+    '<div class="card-head">' +
+      '<span class="property">' + (c.property === 'fill' ? 'fill' : 'stroke') + '</span>' +
+      '<span class="node-name">' + esc(c.nodeName) + '</span>' +
+      '<button class="locate" data-locate="' + c.nodeId + '" title="Показать в Figma">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div class="color-row">' +
+      '<div class="swatch" style="background: ' + c.current + '"><div class="swatch-hex">' + c.current + '</div></div>' +
+      '<svg class="swatch-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>' +
+      '<div class="swatch" style="background: ' + c.suggested + '"><div class="swatch-hex">' + c.suggested + '</div></div>' +
+      '<div class="info">' +
+        '<div class="token"><span class="confidence-dot ' + conf + '"></span>' + esc(c.suggestedToken) + '</div>' +
+        '<div class="hexline">' + c.current + ' → ' + c.suggested + '</div>' +
+      '</div>' +
+    '</div>' +
+    altsHtml +
+    '<div class="actions">' +
+      '<button class="btn-apply" data-fix-color="' + c.id + '" data-node="' + c.nodeId + '" data-prop="' + c.property + '" data-hex="' + c.suggested + '">Применить</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderSpacingGroup(items) {
+  const node = items[0];
+  const allFixed = items.every(function (i) { return state.fixed.has(i.id); });
+  if (allFixed) return '';
+  const visible = items.filter(function (i) { return !state.fixed.has(i.id); });
+  const propLabel = { paddingLeft: 'padding L', paddingRight: 'padding R', paddingTop: 'padding T', paddingBottom: 'padding B', itemSpacing: 'item gap' };
+  return '<div class="card">' +
+    '<div class="card-head">' +
+      '<span class="property">' + visible.length + ' fix</span>' +
+      '<span class="node-name">' + esc(node.nodeName) + '</span>' +
+      '<button class="locate" data-locate="' + node.nodeId + '" title="Показать в Figma">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
+      '</button>' +
+    '</div>' +
+    visible.map(function (it) {
+      return '<div class="spacing-row">' +
+        '<span class="prop">' + (propLabel[it.property] || it.property) + '</span>' +
+        '<span class="val-current">' + it.current + 'px</span>' +
+        '<svg class="arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>' +
+        '<span class="val-suggested">' + it.suggested + 'px</span>' +
+      '</div>';
+    }).join('') +
+    '<div class="actions">' +
+      '<button class="btn-apply" data-fix-group="spacing" data-group-ids="' + visible.map(function (v) { return v.id; }).join(',') + '">Применить все (' + visible.length + ')</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderTypoCard(t) {
+  if (state.fixed.has(t.id)) return '';
+  return '<div class="card" data-card-id="' + t.id + '">' +
+    '<div class="card-head">' +
+      '<span class="property">text</span>' +
+      '<span class="node-name">' + esc(t.nodeName) + '</span>' +
+      '<button class="locate" data-locate="' + t.nodeId + '" title="Показать в Figma">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div class="type-preview was">' +
+      '<div class="sample" style="font-size: 14px;">Aa</div>' +
+      '<div><div class="specs">сейчас</div><div class="specs">' + esc(t.current) + '</div></div>' +
+    '</div>' +
+    '<div class="type-preview will">' +
+      '<div class="sample" style="font-size: 14px; font-weight: ' + t.targetWeight + ';">Aa</div>' +
+      '<div><div class="specs">' + esc(t.suggestedToken) + '</div><div class="specs">' + esc(t.suggested) + '</div></div>' +
+    '</div>' +
+    '<div class="actions">' +
+      '<button class="btn-apply" data-fix-typo="' + t.id + '" data-node="' + t.nodeId + '" data-size="' + t.targetSize + '" data-lh="' + t.targetLineHeight + '" data-weight="' + t.targetWeight + '">Применить</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderOutdatedCard(o) {
+  if (state.fixed.has(o.id)) return '';
+  const updatable = o.updatable && o.componentKey;
+  return '<div class="card outdated-card" data-card-id="' + o.id + '">' +
+    '<div class="card-head">' +
+      '<span class="badge">' + (o.type === 'outdated' ? 'UPDATE' : o.type === 'detached' ? 'DETACHED' : o.type === 'unknown_library' ? 'MISSING' : 'INFO') + '</span>' +
+      '<span class="node-name" style="margin-left: 4px;">' + esc(o.nodeName) + '</span>' +
+      '<button class="locate" data-locate="' + o.nodeId + '" title="Показать в Figma">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div class="msg">' + esc(o.message) + '</div>' +
+    (updatable ? '<div class="actions"><button class="btn-apply" data-fix-outdated="' + o.id + '" data-node="' + o.nodeId + '" data-key="' + o.componentKey + '">Обновить компонент</button></div>' : '') +
+  '</div>';
+}
+
+function renderForeignCard(c) {
+  return '<div class="card" data-card-id="' + c.id + '">' +
+    '<div class="card-head">' +
+      '<span class="property" style="background: rgba(255,159,10,0.14); color: var(--warn);">' + (c.type === 'foreign_library' ? 'чужая lib' : 'не из DS') + '</span>' +
+      '<span class="node-name">' + esc(c.nodeName) + '</span>' +
+      '<button class="locate" data-locate="' + c.nodeId + '" title="Показать в Figma">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6m11-11h-6M7 12H1"/></svg>' +
+      '</button>' +
+    '</div>' +
+    '<div style="font-size: 12px; color: var(--text-muted); line-height: 1.45;">' + esc(c.message) + '</div>' +
+  '</div>';
+}
+
+function attachReviewHandlers() {
+  $$('.locate').forEach(function (b) {
+    b.addEventListener('click', function () { send({ type: 'focus-node', nodeId: b.dataset.locate }); });
+  });
+  $$('[data-fix-color]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      send({ type: 'fix-color', id: b.dataset.fixColor, nodeId: b.dataset.node, property: b.dataset.prop, suggested: b.dataset.hex });
+    });
+  });
+  $$('[data-alt-hex]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      send({ type: 'fix-color', id: b.dataset.id, nodeId: b.dataset.node, property: b.dataset.prop, suggested: b.dataset.altHex });
+    });
+  });
+  $$('[data-fix-typo]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      send({ type: 'fix-typography', id: b.dataset.fixTypo, nodeId: b.dataset.node, targetSize: +b.dataset.size, targetLineHeight: +b.dataset.lh, targetWeight: +b.dataset.weight });
+    });
+  });
+  $$('[data-fix-outdated]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      send({ type: 'update-outdated', id: b.dataset.fixOutdated, nodeId: b.dataset.node, componentKey: b.dataset.key });
+    });
+  });
+  $$('[data-fix-group="spacing"]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const ids = (b.dataset.groupIds || '').split(',').filter(Boolean);
+      const fixes = ids.map(function (id) {
+        const it = state.issues.spacing.find(function (s) { return s.id === id; });
+        return it ? { category: 'spacing', id: it.id, nodeId: it.nodeId, property: it.property, suggested: it.suggested } : null;
+      }).filter(Boolean);
+      send({ type: 'fix-all', fixes: fixes });
+    });
+  });
+  $$('.fix-all').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const cat = b.dataset.cat;
+      const items = state.issues[cat] || [];
+      const fixes = items.filter(function (i) { return !state.fixed.has(i.id); }).map(function (i) {
+        if (cat === 'colors') return { category: 'color', id: i.id, nodeId: i.nodeId, property: i.property, suggested: i.suggested };
+        if (cat === 'spacing') return { category: 'spacing', id: i.id, nodeId: i.nodeId, property: i.property, suggested: i.suggested };
+        if (cat === 'typography') return { category: 'typography', id: i.id, nodeId: i.nodeId, targetSize: i.targetSize, targetLineHeight: i.targetLineHeight, targetWeight: i.targetWeight };
+        if (cat === 'outdated') return { category: 'outdated', id: i.id, nodeId: i.nodeId, componentKey: i.componentKey };
+        return null;
+      }).filter(Boolean);
+      send({ type: 'fix-all', fixes: fixes });
+    });
+  });
+}
+
+// ============ REVIEW REQUEST ============
+async function requestReview(payload) {
+  try {
+    const res = await fetch(REVIEW_ENDPOINT, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) { const err = await res.text(); toast('GPT error ' + res.status); console.error(err); return; }
+    const data = await res.json();
+    state.review = data;
+    renderReview();
+    // зашлём первое assistant-сообщение в чат с резюме
+    seedChatFromReview(data);
+  } catch (e) {
+    toast('Не удалось связаться с GPT');
   }
+}
 
-  // MESSAGES
-  window.onmessage = async function (event) {
-    const msg = event.data.pluginMessage;
-    if (!msg) return;
-
-    if (msg.type === 'selection-changed') {
-      updateSelectionInfo(msg.count, msg.names);
-    }
-
-    if (msg.type === 'ds-status') {
-      const el = $('ds-status');
-      const meta = $('ds-meta');
-      const refresh = $('ds-refresh');
-      el.classList.remove('ok', 'warn');
-      refresh.disabled = false;
-
-      const src = msg.source || {};
-      if (src.kind === 'figma') {
-        el.classList.add('ok');
-        const date = src.lastModified ? new Date(src.lastModified).toLocaleDateString('ru-RU') : '';
-        const stats = src.colors + ' цв · ' + src.typography + ' typo · ' + src.components + ' комп';
-        const tail  = msg.localAttached ? ' + local vars' : '';
-        const link  = src.figmaUrl
-          ? '<a href="' + src.figmaUrl + '" target="_blank" rel="noopener">' + escapeHtml(src.fileName || 'UI Kit') + '</a>'
-          : escapeHtml(src.fileName || 'UI Kit');
-        meta.innerHTML = link + ' · ' + stats + (date ? ' · ' + date : '') + tail;
-      } else if (msg.loaded && msg.localAttached) {
-        el.classList.add('ok');
-        meta.textContent = 'DS из local variables текущего файла';
-      } else {
-        el.classList.add('warn');
-        meta.textContent = 'DS: захардкоженный набор' + (msg.reason ? ' · ' + msg.reason : '');
-      }
-    }
-
-    if (msg.type === 'analyze-start') {
-      showUxLoading();
-      switchTab('colors');
-    }
-
-    if (msg.type === 'analyze-result') {
-      state.issues = msg.issues;
-      state.fixed = new Set();
-      renderIssues();
-      $('analyze-btn').disabled = state.selectionCount === 0;
-      $('analyze-btn').textContent = 'Re-analyze';
-    }
-
-    if (msg.type === 'request-ux-review') {
-      const payload = Object.assign({}, msg.payload, { perspective: state.perspective });
-      state.lastPayload = payload;
-      await requestUxReview(payload);
-    }
-
-    if (msg.type === 'fix-result') {
-      if (msg.ok) {
-        state.fixed.add(msg.id);
-        showToast('Исправлено');
-        renderIssues();
-        switchTab(state.activeTab);
-      } else {
-        showToast('Не удалось применить фикс');
-      }
-    }
-
-    if (msg.type === 'fix-all-result') {
-      let ok = 0;
-      for (const r of msg.results) {
-        if (r.ok) { state.fixed.add(r.id); ok++; }
-      }
-      showToast('Исправлено: ' + ok + ' из ' + msg.results.length);
-      renderIssues();
-      switchTab(state.activeTab);
-    }
-
-    if (msg.type === 'error') {
-      showToast(msg.message);
-      $('analyze-btn').disabled = state.selectionCount === 0;
-      $('analyze-btn').textContent = 'Analyze';
-    }
-  };
-
-  function escapeHtml(s) {
-    if (s == null) return '';
-    return String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+function seedChatFromReview(r) {
+  if (state.chat.length > 0) return;
+  let txt = '**Score ' + (r.overall_score || 0) + '/100** — ' + (r.summary || '');
+  if (r.recommendations && r.recommendations.length) {
+    txt += '\n\nКлючевые наблюдения:\n' + r.recommendations.slice(0, 3).map(function (rc, i) {
+      return (i + 1) + '. **' + rc.title + '** — ' + rc.description;
+    }).join('\n');
   }
+  txt += '\n\nСпросите что-нибудь — могу детальнее по любому пункту, предложить альтернативы или прокомментировать конкретный слой.';
+  pushAssistant(txt);
+}
+
+// ============ LIBRARY ============
+function renderLibrary() {
+  if (!state.ds) return;
+  const ds = state.ds;
+  $('lib-stat-c').textContent = ds.colors.length;
+  $('lib-stat-t').textContent = ds.typography.length;
+  $('lib-stat-s').textContent = ds.spacing.length;
+  $('lib-stat-k').textContent = ds.components.length;
+  applyLibFilter('');
+}
+
+function applyLibFilter(q) {
+  if (!state.ds) return;
+  q = (q || '').trim().toLowerCase();
+  const ds = state.ds;
+
+  const colors = q ? ds.colors.filter(function (c) { return c.name.toLowerCase().includes(q) || c.hex.toLowerCase().includes(q); }) : ds.colors;
+  $('lib-c-count').textContent = colors.length;
+  $('lib-colors').innerHTML = colors.map(function (c) {
+    return '<button class="color-cell" title="' + esc(c.name) + ' · ' + c.hex + '">' +
+      '<div class="swatch-big" style="background: ' + c.hex + '"></div>' +
+      '<div class="meta"><div class="name">' + esc(c.name) + '</div><div class="hex">' + c.hex + '</div></div>' +
+    '</button>';
+  }).join('') || '<div class="empty" style="padding: 14px;"><div class="hint">Ничего не найдено</div></div>';
+
+  const typo = q ? ds.typography.filter(function (t) { return t.name.toLowerCase().includes(q); }) : ds.typography;
+  $('lib-t-count').textContent = typo.length;
+  $('lib-typo').innerHTML = typo.map(function (t) {
+    const size = Math.min(t.size || 14, 22);
+    return '<div class="type-item">' +
+      '<div class="sample" style="font-size: ' + size + 'px; font-weight: ' + (t.weight || 400) + '; line-height: ' + ((t.lh || size) * size / (t.size || size)) + 'px;">' + esc(t.name) + '</div>' +
+      '<div class="row"><span class="name">' + esc(t.name) + '</span><span>' + t.size + '/' + (t.lh || '—') + ' · w' + (t.weight || 400) + '</span></div>' +
+    '</div>';
+  }).join('') || '<div class="empty" style="padding: 14px;"><div class="hint">Ничего не найдено</div></div>';
+
+  const spacings = q ? ds.spacing.filter(function (s) { return String(s).includes(q); }) : ds.spacing;
+  $('lib-s-count').textContent = spacings.length;
+  const maxS = Math.max.apply(null, spacings.length ? spacings : [1]);
+  $('lib-spacing').innerHTML = spacings.map(function (s) {
+    const w = Math.max(2, (s / maxS) * 200);
+    return '<div class="spacing-step"><span class="num">' + s + 'px</span><div class="bar" style="width: ' + w + 'px"></div></div>';
+  }).join('') || '<div class="empty" style="padding: 14px;"><div class="hint">Ничего не найдено</div></div>';
+
+  const comps = q ? ds.components.filter(function (c) { return c.toLowerCase().includes(q); }) : ds.components;
+  $('lib-k-count').textContent = comps.length;
+  $('lib-comp').innerHTML = comps.slice(0, 200).map(function (c) {
+    const ini = (c[0] || '?').toUpperCase();
+    return '<div class="comp-item"><div class="icon">' + esc(ini) + '</div><div class="name">' + esc(c) + '</div></div>';
+  }).join('') || '<div class="empty" style="padding: 14px;"><div class="hint">Ничего не найдено</div></div>';
+}
+
+$('lib-search').addEventListener('input', function (e) { applyLibFilter(e.target.value); });
+
+// ============ CHAT ============
+const chatText = $('chat-text');
+const chatSend = $('chat-send');
+chatText.addEventListener('input', function () {
+  chatText.style.height = 'auto';
+  chatText.style.height = Math.min(chatText.scrollHeight, 100) + 'px';
+  chatSend.disabled = chatText.value.trim().length === 0 || state.chatBusy;
+});
+chatText.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!chatSend.disabled) sendChatMessage(); }
+});
+chatSend.addEventListener('click', sendChatMessage);
+$$('.suggest-chip').forEach(function (b) {
+  b.addEventListener('click', function () {
+    chatText.value = b.dataset.q;
+    chatText.dispatchEvent(new Event('input'));
+    sendChatMessage();
+  });
+});
+
+function pushUser(text) {
+  state.chat.push({ role: 'user', content: text });
+  renderChat();
+}
+function pushAssistant(text) {
+  state.chat.push({ role: 'assistant', content: text });
+  renderChat();
+}
+function renderChat() {
+  const box = $('chat-messages');
+  if (state.chat.length === 0) {
+    box.innerHTML = '<div class="empty" style="padding: 32px 12px;"><div class="icon">💬</div><div class="title">GPT-5.5 готов помочь</div><div class="hint">Сначала запустите Analyze, потом задавайте вопросы.</div></div>';
+    return;
+  }
+  box.innerHTML = state.chat.map(function (m) {
+    return '<div class="chat-msg ' + m.role + '"><div class="bubble">' + md(m.content) + '</div></div>';
+  }).join('') + (state.chatBusy ? '<div class="chat-msg assistant chat-typing"><div class="bubble"><span class="dots"><span></span><span></span><span></span></span></div></div>' : '');
+  box.scrollTop = box.scrollHeight;
+}
+async function sendChatMessage() {
+  const text = chatText.value.trim();
+  if (!text || state.chatBusy) return;
+  pushUser(text);
+  chatText.value = '';
+  chatText.style.height = 'auto';
+  chatSend.disabled = true;
+  state.chatBusy = true;
+  renderChat();
+  switchTab('chat');
+
+  try {
+    const res = await fetch(CHAT_ENDPOINT, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: state.chat.map(function (m) { return { role: m.role, content: m.content }; }),
+        context: state.reviewContext ? {
+          layoutJson: state.reviewContext.layoutJson,
+          issues: state.reviewContext.issues,
+          selectionNames: state.reviewContext.selectionNames,
+          screenshotBase64: state.chat.filter(function (m) { return m.role === 'user'; }).length === 1 ? state.reviewContext.screenshotBase64 : undefined
+        } : {},
+        useFigmaDS: true
+      })
+    });
+    state.chatBusy = false;
+    if (!res.ok) {
+      pushAssistant('Не удалось получить ответ (HTTP ' + res.status + '). Попробуйте ещё раз.');
+      return;
+    }
+    const data = await res.json();
+    pushAssistant(data.reply || '_(пустой ответ)_');
+  } catch (e) {
+    state.chatBusy = false;
+    pushAssistant('Ошибка сети: ' + e.message);
+  }
+}
 </script>
 </body>
 </html>
