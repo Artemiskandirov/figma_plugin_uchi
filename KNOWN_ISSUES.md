@@ -11,6 +11,20 @@
 
 ---
 
+## Changelog: переход на figma.teamLibrary (16 мая 2026)
+
+Главный прорыв турне. Идея — `figma.teamLibrary` Plugin API даёт доступ к переменным подключённой library **на всех планах Figma**, не только Enterprise. REST `/variables/local` оставлен как параллельный канал.
+
+| Шаг | Что сделано |
+| --- | --- |
+| `plugin/manifest.json` | Добавлено `"permissions": ["teamlibrary"]`. Без этого `figma.teamLibrary` в плагине `undefined`. |
+| `tryLoadDSFromTeamLibrary()` | Новая функция. Берёт `getAvailableLibraryVariableCollectionsAsync` → фильтр по имени `uchi` → для каждой коллекции `getVariablesInLibraryCollectionAsync` → для каждой переменной `importVariableByKeyAsync` (даёт доступ к `valuesByMode`). Одношаговый алиас‑resolver. Bucketing: цвета / spacing (по имени matches `space|gap|padding|margin|size`) / radii (`radius|corner`). |
+| Throttling | Каждые 20 импортов — пауза 120 мс. На больших DS защищает от лагов. |
+| Кэш в `figma.clientStorage` | Ключ `uchi-ds-teamlib-cache-v1`, TTL 1 час. В Library → Диагностика отображается возраст кэша и кнопка «Обновить из Figma (без кэша)». |
+| Merge | `mergeTeamLibraryData` — team library wins по имени над hardcoded и над spacing‑числами без variableKey. |
+| `bootstrapDS()` | Теперь параллельно: REST через Vercel + tryLoadDSFromFile + tryLoadDSFromTeamLibrary. Источник DS_SOURCE.kind = `'figma-teamlib'` если teamLibrary дал данные. |
+| UI | DS pill в шапке показывает имя library и «· live». Library → Диагностика — отдельная цветная плашка с состоянием teamLibrary (✓/⚠), счётчиками, librariesScanned, ageMin, кнопкой ручного обновления. |
+
 ## Changelog по техническому аудиту (май 2026)
 
 Аудит против официальных Figma Plugin API docs и OpenAI Responses API. Что найдено и исправлено:
@@ -33,12 +47,13 @@
 
 | Что | Статус | Подробности |
 | --- | --- | --- |
-| Бэкенд читает UI Kit Uchi.ru Mobile App через Figma REST API | ✅ | `/api/design-system` тянет `8SxJj1kLRNt9ljLQdRa1Ai`. |
-| Резолв variable‑алиасов (`color/text/primary` → `color/primitive/violet-500`) | 🟡 | Реализовано в `resolveAliasChain`, но **зависит от плана Figma**. На не‑Enterprise эндпоинт `/v1/files/{key}/variables/local` возвращает 403, и резолвить нечего. См. блок Диагностики ниже. |
-| Если variables возвращают 403 — fallback на стили (Color Styles, Text Styles, Effect Styles) | ✅ | Если в UI Kit'е токены лежат только как переменные и не сохранены как Styles — на не‑Enterprise они не вытащатся. |
-| **Загрузка эффектов / теней в плагин** | ❌ → 🛠️ | Эндпоинт возвращает `tokens.effects`, но плагин их не процессит и не валидирует. Делаю сейчас. |
-| Переменные из подключённой library (а не local) | ❌ | Figma REST API не отдаёт переменные чужой library через `/variables/local`. Публичного аналога нет. Работаем только с тем, что лежит локально в самом UI Kit'е. |
-| Видимость, почему НЕ загрузились конкретные токены | ❌ → 🛠️ | Сейчас добавляю «Диагностика» в Library tab + diagnostics‑поле в ответ API с реальным статусом каждого fetch. |
+| **Plugin API `figma.teamLibrary` — главный канал, работает на всех планах** | ✅ | `tryLoadDSFromTeamLibrary` в `plugin/code.js`: `getAvailableLibraryVariableCollectionsAsync` → фильтр по имени Uchi → `getVariablesInLibraryCollectionAsync` → `importVariableByKeyAsync` для каждой. Throttling каждые 20 импортов, кэш на 1 час в `figma.clientStorage`, кнопка «Обновить из Figma (без кэша)» в Диагностике. Требует `"permissions": ["teamlibrary"]` в manifest.json — добавлено. |
+| Бэкенд читает UI Kit Uchi.ru Mobile App через Figma REST API | ✅ | `/api/design-system` тянет `8SxJj1kLRNt9ljLQdRa1Ai`. Variables эндпоинт работает только на Enterprise. На остальных планах источник переменных — `figma.teamLibrary` в плагине. |
+| Резолв variable‑алиасов (`color/text/primary` → `color/primitive/violet-500`) | ✅ | Реализовано в двух местах: на бэкенде — `resolveAliasChain` (только для Enterprise); в плагине через teamLibrary — одношаговый алиас‑resolver через `getVariableByIdAsync` + повторный `importVariableByKeyAsync`. |
+| Если variables через REST возвращают 403 — fallback: teamLibrary + стили | ✅ | На не‑Enterprise REST возвращает только Styles. Variables подтягиваются параллельно через Plugin API. Если у юзера UI Kit не подключён к файлу — единственный fallback это Styles. |
+| Загрузка эффектов / теней в плагин | ✅ | `tokens.effects` мерджатся в `DS.effects`, анализатор сверяет тени узлов через `effectsApproxEqual`. Bind effect‑стиля на Apply пока нет — 🧭 запланировано. |
+| Видимость, почему НЕ загрузились конкретные токены | ✅ | Library → «Диагностика загрузки DS»: блок teamLibrary вверху (цвет/spacing/radii/libraries scanned/imported/cache age), статусы всех REST‑эндпоинтов, причина каждой неудачи. |
+| Известный баг Figma: `scopes` после `importVariableByKeyAsync` всегда `['ALL_SCOPES']` | 🟡 | Мы scopes не используем для bind‑логики, так что не блокирует. Если когда‑то нужно будет ограничивать «куда токен можно биндить» — нужно читать scope из исходного дескриптора, не из импортированной переменной. |
 
 ---
 
@@ -122,7 +137,7 @@
 
 ## Что НЕ делаю в этом турне (и почему)
 
-- **Reverse alias loading (получение variables из подключённой library)** — частично возможно через `subscribed_id` в `/variables/local` + повторный `/variables/published` к library‑файлу (нужно знать его fileKey). Без Enterprise и file_variables:read эти эндпоинты возвращают 403 — публичного workaround нет. Текущий fallback: просить команду продублировать ключевые токены как Color/Text/Effect Styles.
+- ~~**Reverse alias loading (получение variables из подключённой library)**~~ — ✅ **решено в этом турне через `figma.teamLibrary` (Plugin API), работает на всех планах**. REST путь оставлен для Enterprise как параллельный канал.
 - **GPT‑structure‑check с JSON‑schemes** — большая отдельная фича. Сейчас GPT в чате отвечает текстом; для перечня структурных issues (что должно быть компонентом, какие блоки сломаны) нужен отдельный эндпоинт с json_schema. 🧭 Запланировано.
 - **Кросс‑файловое создание компонентов в DS файле** — упирается в ограничение Figma Plugin API («can only access styles, components, and instances that are currently in the file, or have been imported»). Workaround — материализация черновиков на странице 🔴 Drafts в текущем файле, потом дизайнер вручную копирует в UI Kit.
 - **Mode picker (выбрать light/dark/web/mobile прямо в UI плагина)** — `setExplicitVariableModeForCollection` существует и работает; нужно лишь дочитать список модусов с variables и сделать переключалку в Library tab. 🧭 Запланировано.

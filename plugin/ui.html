@@ -870,13 +870,22 @@ function renderDSPill(msg) {
   const meta = $('ds-pill-meta');
   pill.classList.remove('ok', 'warn', 'bad');
   const src = msg.source || {};
-  if (src.kind === 'figma') {
+  const counts = [];
+  if (src.colors) counts.push(src.colors + ' цв');
+  if (src.typography) counts.push(src.typography + ' typo');
+  if (src.components) counts.push(src.components + ' комп');
+
+  if (src.kind === 'figma-teamlib') {
+    pill.classList.add('ok');
+    name.textContent = (src.fileName || 'Team Library');
+    meta.textContent = '· ' + counts.join(' · ') + ' · live';
+  } else if (src.kind === 'figma') {
     pill.classList.add('ok');
     name.textContent = src.fileName || 'UI Kit';
-    const counts = [];
-    if (src.colors) counts.push(src.colors + ' цв');
-    if (src.typography) counts.push(src.typography + ' typo');
-    if (src.components) counts.push(src.components + ' комп');
+    meta.textContent = '· ' + counts.join(' · ');
+  } else if (msg.teamLibLoaded) {
+    pill.classList.add('ok');
+    name.textContent = 'Team Library';
     meta.textContent = '· ' + counts.join(' · ');
   } else if (msg.loaded && msg.localAttached) {
     pill.classList.add('ok');
@@ -1364,6 +1373,27 @@ function renderDiagnostics(d) {
     box.innerHTML = '<div style="padding: 12px; background: var(--bg-card); border: 1px dashed var(--border); border-radius: var(--radius-sm); font-size: 11px; color: var(--text-dim); text-align: center;">Диагностика недоступна. Обновите DS.</div>';
     return;
   }
+
+  // Team Library Variables — главный canal на не-Enterprise
+  const tl = d.teamLibrary;
+  let teamLibBlock = '';
+  if (tl) {
+    const ok = !!tl.loaded;
+    const sevColor = ok ? 'var(--ok)' : 'var(--warn)';
+    const sevBg = ok ? 'rgba(52,199,89,0.08)' : 'rgba(255,159,10,0.10)';
+    const libs = (tl.librariesScanned || []).map(function (l) { return l.libraryName + (l.collectionName ? ' / ' + l.collectionName : ''); }).join('; ') || '—';
+    teamLibBlock = '<div style="padding: 10px 12px; background: ' + sevBg + '; border: 1px solid ' + sevColor + '40; border-radius: var(--radius-sm); margin-bottom: 8px; font-size: 11px; line-height: 1.5;">' +
+      '<strong style="color: ' + sevColor + ';">' + (ok ? '✓ Team Library Variables' : '⚠ Team Library Variables') + '</strong>' +
+      (ok ?
+        '<br/>Загружено: <strong>' + tl.colors + '</strong> цветов, <strong>' + tl.spacing + '</strong> spacing, <strong>' + (tl.radii || 0) + '</strong> radii.' +
+        (tl.fromCache ? ' <span style="color: var(--text-dim);">(из кэша, ' + tl.ageMin + ' мин назад)</span>' : ' <span style="color: var(--text-dim);">(из ' + (tl.descriptors || 0) + ' дескрипторов, ' + (tl.imported || 0) + ' импортировано)</span>') +
+        '<br/><span style="color: var(--text-muted);">Libraries: ' + esc(libs) + '</span>' +
+        '<br/><button id="refresh-teamlib" style="margin-top: 6px; padding: 3px 9px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; font-size: 10px; cursor: pointer; color: var(--text);">Обновить из Figma (без кэша)</button>'
+      :
+        '<br/><span style="color: var(--text-muted);">' + esc(tl.reason || '—') + '</span>'
+      ) +
+    '</div>';
+  }
   function row(label, value, ok) {
     const dot = '<span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:' + (ok === false ? 'var(--crit)' : ok === true ? 'var(--ok)' : 'var(--text-dim)') + '; margin-right:6px;"></span>';
     return '<div style="display:flex; align-items:center; justify-content:space-between; padding: 5px 10px; border-bottom: 1px solid var(--border); font-size: 11px;"><span style="color: var(--text-muted);">' + dot + label + '</span><span style="font-family: ui-monospace, monospace;">' + value + '</span></div>';
@@ -1373,7 +1403,7 @@ function renderDiagnostics(d) {
   if (d.summary && d.summary.warning) {
     warning = '<div style="padding: 10px 12px; background: rgba(255,159,10,0.10); border: 1px solid rgba(255,159,10,0.30); border-radius: var(--radius-sm); font-size: 11px; color: var(--text); margin-bottom: 8px; line-height: 1.45;"><strong style="color: var(--warn);">⚠ ' + esc(d.summary.source) + '</strong><br/>' + esc(d.summary.warning) + '</div>';
   }
-  box.innerHTML = warning +
+  box.innerHTML = teamLibBlock + warning +
     '<div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">' +
       '<div style="padding: 8px 10px; font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid var(--border);">Эндпоинты Figma REST</div>' +
       row('GET /files/:key (meta)', (e.meta && e.meta.status) || '—', e.meta && e.meta.ok) +
@@ -1399,6 +1429,12 @@ function renderDiagnostics(d) {
       row('Effect styles', d.styles.effects) +
       row('Grid styles', d.styles.grids) +
     '</div>' : '');
+
+  const rb = $('refresh-teamlib');
+  if (rb) rb.addEventListener('click', function () {
+    rb.disabled = true; rb.textContent = 'Обновляю…';
+    send({ type: 'refresh-ds', clearTeamLibCache: true });
+  });
 }
 
 const _origToggleDiag = document.getElementById('diag-toggle');

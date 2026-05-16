@@ -354,6 +354,196 @@ async function loadDSFromVercel() {
 }
 
 // =============================================================================
+// TEAM LIBRARY VARIABLES — главный путь, работает на ВСЕХ планах Figma
+// (не требует Enterprise, в отличие от REST /variables/local).
+// Требует: "permissions": ["teamlibrary"] в manifest.json + library должна
+// быть подключена пользователем к текущему файлу (Assets → Libraries).
+// =============================================================================
+
+const TEAMLIB_CACHE_KEY = 'uchi-ds-teamlib-cache-v1';
+const TEAMLIB_CACHE_TTL_MS = 60 * 60 * 1000; // 1 час: переменные DS меняются редко, импорт дорогой
+const TEAMLIB_LIBRARY_NAME_RE = /uchi/i;
+const TEAMLIB_THROTTLE_EVERY = 20;
+const TEAMLIB_THROTTLE_MS = 120;
+
+async function tryLoadDSFromTeamLibrary(options) {
+  options = options || {};
+  if (!figma.teamLibrary || !figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync) {
+    return {
+      loaded: false,
+      reason: 'figma.teamLibrary недоступен. Проверьте, что в manifest.json есть "permissions": ["teamlibrary"], и переимпортите плагин.'
+    };
+  }
+
+  // 1. Кэш: пропускаем дорогой импорт, если данные свежие
+  if (!options.skipCache) {
+    try {
+      const cached = await figma.clientStorage.getAsync(TEAMLIB_CACHE_KEY);
+      if (cached && cached.cachedAt && (Date.now() - cached.cachedAt) < TEAMLIB_CACHE_TTL_MS) {
+        mergeTeamLibraryData(cached.data);
+        return {
+          loaded: cached.data.colors.length > 0 || cached.data.spacing.length > 0 || cached.data.radii.length > 0,
+          colors: cached.data.colors.length,
+          spacing: cached.data.spacing.length,
+          radii: cached.data.radii.length,
+          fromCache: true,
+          ageMin: Math.round((Date.now() - cached.cachedAt) / 60000),
+          librariesScanned: cached.data.librariesScanned || []
+        };
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // 2. Список коллекций из подключённых libraries
+  let libCols;
+  try {
+    libCols = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+  } catch (e) {
+    return { loaded: false, reason: 'getAvailableLibraryVariableCollectionsAsync() ошибка: ' + e.message };
+  }
+  if (!libCols || libCols.length === 0) {
+    return {
+      loaded: false,
+      reason: 'Ни одна library с переменными не подключена к этому файлу. Откройте Assets → Libraries → подключите UI Kit Uchi.'
+    };
+  }
+
+  // 3. Фильтр по имени library; если не нашли Uchi — берём все (диагностика покажет, что было найдено)
+  const uchiCols = libCols.filter(function (c) { return TEAMLIB_LIBRARY_NAME_RE.test(c.libraryName || '') || TEAMLIB_LIBRARY_NAME_RE.test(c.name || ''); });
+  const targetCols = uchiCols.length > 0 ? uchiCols : libCols;
+
+  const loadedColors = [];
+  const loadedSpacing = [];
+  const loadedRadii = [];
+  const librariesScanned = [];
+  let totalDescriptors = 0;
+  let importedCount = 0;
+  let errors = 0;
+
+  for (const col of targetCols) {
+    librariesScanned.push({ libraryName: col.libraryName, collectionName: col.name });
+
+    let descriptors;
+    try {
+      descriptors = await figma.teamLibrary.getVariablesInLibraryCollectionAsync(col.key);
+    } catch (e) {
+      errors++; continue;
+    }
+    totalDescriptors += (descriptors || []).length;
+
+    for (const d of (descriptors || [])) {
+      try {
+        // Throttling: каждые N импортов короткая пауза, чтобы не убить performance
+        if (importedCount > 0 && importedCount % TEAMLIB_THROTTLE_EVERY === 0) {
+          await new Promise(function (r) { setTimeout(r, TEAMLIB_THROTTLE_MS); });
+        }
+        const variable = await figma.variables.importVariableByKeyAsync(d.key);
+        importedCount++;
+
+        const collection = await figma.variables.getVariableCollectionByIdAsync(variable.variableCollectionId);
+        if (!collection) continue;
+        const modeId = collection.defaultModeId;
+        const value = (variable.valuesByMode || {})[modeId];
+        if (value == null) continue;
+
+        if (variable.resolvedType === 'COLOR' && value && value.r !== undefined) {
+          loadedColors.push({
+            name: variable.name,
+            hex: rgbToHex(value.r, value.g, value.b),
+            variableKey: d.key,
+            collection: col.name,
+            libraryName: col.libraryName
+          });
+        } else if (variable.resolvedType === 'COLOR' && value && value.type === 'VARIABLE_ALIAS') {
+          // Алиас — резолвим один шаг через importVariableByKeyAsync
+          try {
+            // Variable алиас несёт id, но нам нужен ключ. Пробуем взять у целевой переменной.
+            const target = await figma.variables.getVariableByIdAsync(value.id);
+            if (target && target.key) {
+              const targetVar = await figma.variables.importVariableByKeyAsync(target.key);
+              const tVal = (targetVar.valuesByMode || {})[collection.defaultModeId] ||
+                           (targetVar.valuesByMode || {})[Object.keys(targetVar.valuesByMode || {})[0]];
+              if (tVal && tVal.r !== undefined) {
+                loadedColors.push({
+                  name: variable.name,
+                  hex: rgbToHex(tVal.r, tVal.g, tVal.b),
+                  variableKey: d.key,
+                  isAlias: true,
+                  aliasOf: targetVar.name,
+                  collection: col.name,
+                  libraryName: col.libraryName
+                });
+              }
+            }
+          } catch (e) { /* alias resolution failed, skip */ }
+        } else if (variable.resolvedType === 'FLOAT' && typeof value === 'number') {
+          const lname = variable.name.toLowerCase();
+          if (/radius|corner/i.test(lname)) {
+            loadedRadii.push({ name: variable.name, value: value, variableKey: d.key });
+          } else if (/spac|gap|padding|margin|size/i.test(lname)) {
+            loadedSpacing.push({ name: variable.name, value: value, variableKey: d.key });
+          }
+        }
+      } catch (e) {
+        errors++;
+      }
+    }
+  }
+
+  const result = {
+    colors: loadedColors,
+    spacing: loadedSpacing,
+    radii: loadedRadii,
+    librariesScanned: librariesScanned
+  };
+  mergeTeamLibraryData(result);
+
+  // Кэшируем (даже если результат пустой — не будем долбить teamLibrary заново до TTL)
+  try {
+    await figma.clientStorage.setAsync(TEAMLIB_CACHE_KEY, { data: result, cachedAt: Date.now() });
+  } catch (e) { /* ignore */ }
+
+  return {
+    loaded: loadedColors.length > 0 || loadedSpacing.length > 0 || loadedRadii.length > 0,
+    colors: loadedColors.length,
+    spacing: loadedSpacing.length,
+    radii: loadedRadii.length,
+    descriptors: totalDescriptors,
+    imported: importedCount,
+    errors: errors,
+    librariesScanned: librariesScanned,
+    fromCache: false
+  };
+}
+
+function mergeTeamLibraryData(data) {
+  if (!data) return;
+  if (data.colors && data.colors.length > 0) {
+    // Team library wins по имени — это самый авторитетный источник.
+    const byName = {};
+    for (const c of data.colors) byName[c.name] = c;
+    for (const c of DS.primitiveColors) if (!byName[c.name]) byName[c.name] = c;
+    DS.primitiveColors = Object.values(byName);
+  }
+  const numericPool = [].concat(data.spacing || [], data.radii || []);
+  if (numericPool.length > 0) {
+    const existingByValue = {};
+    for (const s of DS.spacingScale) existingByValue[s.value] = s;
+    for (const s of numericPool) {
+      // Team library token wins, если есть variableKey
+      if (!existingByValue[s.value] || !existingByValue[s.value].variableKey) {
+        existingByValue[s.value] = s;
+      }
+    }
+    DS.spacingScale = Object.values(existingByValue).sort(function (a, b) { return a.value - b.value; });
+  }
+}
+
+async function clearTeamLibraryCache() {
+  try { await figma.clientStorage.deleteAsync(TEAMLIB_CACHE_KEY); } catch (e) {}
+}
+
+// =============================================================================
 // ЛОКАЛЬНЫЕ VARIABLES — дополнение, не перезапись
 // =============================================================================
 
@@ -1131,17 +1321,45 @@ async function sendDrafts() {
   figma.ui.postMessage({ type: 'drafts', drafts: drafts, fileKey: figma.fileKey || null });
 }
 
-async function bootstrapDS() {
+async function bootstrapDS(opts) {
+  opts = opts || {};
+  // 1. REST через Vercel (full DS только на Enterprise; иначе — fallback на Styles)
   const vercelResult = await loadDSFromVercel();
+  // 2. Local Variables текущего файла (если есть)
   let localResult = null;
   try { localResult = await tryLoadDSFromFile(); } catch (e) { /* ignore */ }
+  // 3. Team Library Variables — главный путь, работает на всех планах.
+  //    Делает variables-доступ возможным даже без Enterprise.
+  let teamLibResult = null;
+  try { teamLibResult = await tryLoadDSFromTeamLibrary({ skipCache: opts.skipTeamLibCache }); } catch (e) {
+    teamLibResult = { loaded: false, reason: e.message };
+  }
+
+  // После всех мерджей — пересчитаем счётчики источника
+  DS_SOURCE.colors = DS.primitiveColors.length;
+  DS_SOURCE.spacings = DS.spacingScale.length;
+  DS_SOURCE.typography = DS.typography.length;
+  DS_SOURCE.components = DS.components.length;
+  // Если team library дала переменные — это главный источник, отметим
+  if (teamLibResult && teamLibResult.loaded) {
+    DS_SOURCE.kind = 'figma-teamlib';
+    if (teamLibResult.librariesScanned && teamLibResult.librariesScanned.length) {
+      DS_SOURCE.fileName = teamLibResult.librariesScanned.map(function (l) { return l.libraryName; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join(', ');
+    }
+  }
+  // В diagnostics добавим статус teamLibrary, чтобы UI это видел
+  if (!DS_DIAGNOSTICS) DS_DIAGNOSTICS = {};
+  DS_DIAGNOSTICS.teamLibrary = teamLibResult;
+  DS_DIAGNOSTICS.localVariables = localResult;
 
   figma.ui.postMessage({
     type: 'ds-status',
-    loaded: vercelResult.loaded || (localResult && localResult.loaded),
+    loaded: vercelResult.loaded || (localResult && localResult.loaded) || (teamLibResult && teamLibResult.loaded),
     source: DS_SOURCE,
     localAttached: !!(localResult && localResult.loaded),
-    reason: vercelResult.loaded ? null : (vercelResult.reason || (localResult && localResult.reason))
+    teamLibLoaded: !!(teamLibResult && teamLibResult.loaded),
+    teamLibReason: teamLibResult && !teamLibResult.loaded ? teamLibResult.reason : null,
+    reason: vercelResult.loaded ? null : (vercelResult.reason || (teamLibResult && teamLibResult.reason) || (localResult && localResult.reason))
   });
   sendDSLibrary();
   sendDrafts();
@@ -1250,16 +1468,8 @@ figma.ui.onmessage = async function (msg) {
     figma.ui.postMessage({ type: 'fix-all-result', results: results });
   }
   if (msg.type === 'refresh-ds') {
-    const v = await loadDSFromVercel();
-    let l = null; try { l = await tryLoadDSFromFile(); } catch (e) {}
-    figma.ui.postMessage({
-      type: 'ds-status',
-      loaded: v.loaded || (l && l.loaded),
-      source: DS_SOURCE,
-      localAttached: !!(l && l.loaded),
-      reason: v.loaded ? null : (v.reason || (l && l.reason))
-    });
-    sendDSLibrary();
+    if (msg.clearTeamLibCache) await clearTeamLibraryCache();
+    await bootstrapDS({ skipTeamLibCache: !!msg.clearTeamLibCache });
   }
   if (msg.type === 'request-library') sendDSLibrary();
   if (msg.type === 'request-drafts') sendDrafts();
